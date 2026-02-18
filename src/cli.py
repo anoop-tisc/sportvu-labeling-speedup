@@ -128,6 +128,10 @@ def main():
                         help="Team abbreviation for custom range (e.g., TOR, CHA)")
     parser.add_argument("--questions", default=None,
                         help="Path to questions file for batch mode")
+    parser.add_argument("--render", action="store_true",
+                        help="Render MP4 video for the selected possession/time range")
+    parser.add_argument("--output-dir", default="outputs/",
+                        help="Directory for rendered videos (default: outputs/)")
     parser.add_argument("--verbose", "-v", action="store_true",
                         help="Show agent tool calls")
     args = parser.parse_args()
@@ -163,6 +167,23 @@ def main():
         possession = possessions[args.possession]
     else:
         possession = pick_possession(possessions, period=args.period)
+
+    # Render video if requested
+    if args.render:
+        from src.visualize import render_video
+        out_dir = Path(args.output_dir)
+        gc_s = possession.start_gc
+        gc_e = possession.end_gc
+        fname = f"P{possession.period}_{gc_s:.0f}_{gc_e:.0f}.mp4"
+        video_path = render_video(
+            game, pbp_events,
+            period=possession.period,
+            gc_start=gc_s,
+            gc_end=gc_e,
+            output_path=out_dir / fname,
+        )
+        if video_path:
+            print(f"Video: {video_path}")
 
     # Run
     if args.questions:

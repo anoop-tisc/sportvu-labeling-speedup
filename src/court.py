@@ -10,7 +10,7 @@ Left/Right convention: from the offensive player's perspective facing the basket
 
 import math
 from src.config import (
-    COURT_LENGTH, LEFT_BASKET, RESTRICTED_AREA_RADIUS,
+    COURT_LENGTH, COURT_WIDTH, LEFT_BASKET, RESTRICTED_AREA_RADIUS,
     PAINT_Y_MIN, PAINT_Y_MAX, PAINT_DEPTH,
     THREE_POINT_ARC_RADIUS, THREE_POINT_CORNER_DIST,
 )
@@ -36,10 +36,14 @@ def normalize_coords(x: float, y: float, attacking_right: bool) -> tuple[float, 
     """Normalize coordinates so the offensive basket is at (5.25, 25).
 
     If team is attacking the right basket (88.75, 25), mirror x.
-    Y stays unchanged to preserve left/right convention.
+    If team is attacking the left basket, mirror y so that left/right
+    from the player's perspective (facing the basket) stays consistent
+    with classify_zone's convention (y < 25 = left, y > 25 = right).
     """
     if attacking_right:
         x = COURT_LENGTH - x
+    else:
+        y = COURT_WIDTH - y
     return x, y
 
 
