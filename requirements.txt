@@ -1,0 +1,4 @@
+anthropic>=0.40.0
+requests
+numpy
+python-dotenv
