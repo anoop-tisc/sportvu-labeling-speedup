@@ -13,7 +13,7 @@ from matplotlib.patches import Circle, Rectangle, Arc
 from subprocess import Popen, PIPE
 from pathlib import Path
 
-from src.sportvu_loader import GameData, Moment, get_moments
+from src.sportvu_loader import GameData, Moment, get_moments, resolve_player_by_name
 
 # Output dimensions
 WIDTH = 1280
@@ -213,8 +213,37 @@ def render_frame(moment, game, pbp_events, team_colors=None,
     return fig
 
 
+def _build_handler_lookup(game, period, gc_start, gc_end):
+    """Run ball handler detection and return a function that maps game_clock → player_id or None."""
+    from src.tracking_tools import get_ball_handler
+
+    data = get_ball_handler(game, period, gc_start, gc_end)
+    segments = data.get("handlers", [])
+
+    # Resolve handler names to player_ids
+    resolved = []  # (start_gc, end_gc, player_id_or_None)
+    for seg in segments:
+        name = seg.get("handler")
+        pid = None
+        if name:
+            p = resolve_player_by_name(game, name)
+            if p:
+                pid = p.player_id
+        resolved.append((seg["start_gc"], seg["end_gc"], pid))
+
+    def lookup(gc):
+        for s_gc, e_gc, pid in resolved:
+            # gc counts down, so s_gc >= e_gc
+            if e_gc <= gc <= s_gc:
+                return pid
+        return None
+
+    return lookup
+
+
 def render_video(game, pbp_events, period, gc_start, gc_end,
-                 output_path, commentary=True, highlight_player_id=None):
+                 output_path, commentary=True, highlight_player_id=None,
+                 show_handler=True):
     """Render an MP4 video for a time segment.
 
     Args:
@@ -225,7 +254,8 @@ def render_video(game, pbp_events, period, gc_start, gc_end,
         gc_end: game clock at end (lower value)
         output_path: file path for MP4 output
         commentary: include PBP commentary text below court
-        highlight_player_id: optional player_id to highlight with thicker edge
+        highlight_player_id: optional static player_id to highlight
+        show_handler: highlight the detected ball handler each frame
 
     Returns:
         Path to the created MP4 file, or None on failure.
@@ -240,6 +270,12 @@ def render_video(game, pbp_events, period, gc_start, gc_end,
     home_abbr = game.home_team["abbreviation"]
     away_abbr = game.visitor_team["abbreviation"]
     team_colors = {-1: "#ff8c00", home_id: "#e74c3c", away_id: "#3498db"}
+
+    # Build per-frame handler lookup
+    handler_lookup = None
+    if show_handler:
+        print("Detecting ball handlers ...")
+        handler_lookup = _build_handler_lookup(game, period, gc_start, gc_end)
 
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -292,9 +328,16 @@ def render_video(game, pbp_events, period, gc_start, gc_end,
         for spine in ax.spines.values():
             spine.set_visible(False)
 
+        # -- Determine which player to highlight --
+        frame_highlight = highlight_player_id
+        if handler_lookup is not None:
+            detected = handler_lookup(moment.game_clock)
+            if detected is not None:
+                frame_highlight = detected
+
         # -- Frame data --
         x_pos, y_pos, colors, sizes, edges, jerseys = _extract_frame_data(
-            moment, game, team_colors, highlight_player_id)
+            moment, game, team_colors, frame_highlight)
         shot_clock_str, game_clock_str, quarter_str = _clock_strings(moment)
         commentary_script, score_str = get_commentary(
             pbp_events, moment.period, moment.game_clock)
