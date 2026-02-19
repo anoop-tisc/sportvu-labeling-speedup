@@ -262,11 +262,87 @@ def get_ball_handler(game: GameData, period: int, gc_start: float, gc_end: float
     }
 
 
-def detect_passes(game: GameData, period: int, gc_start: float, gc_end: float,
-                  attacking_basket: dict | None = None) -> dict:
-    """Detect passes in a time range.
+def _build_pbp_exclusion_events(pbp_events: list[dict] | None,
+                                period: int,
+                                gc_start: float, gc_end: float) -> list[dict]:
+    """Extract PBP events that explain ball handler transitions.
 
-    A pass = handler A → gap → handler B (same team).
+    Returns a list of possession-relevant PBP events sorted by game_clock
+    descending (matching the direction the game clock counts).
+    """
+    if not pbp_events:
+        return []
+
+    from src.pbp import get_pbp_events
+
+    # Get all PBP events in range (with buffer for edge cases)
+    all_events = get_pbp_events(pbp_events, period, gc_start + 5.0, gc_end - 5.0)
+
+    # Keep only events that explain possession changes
+    relevant_types = {1, 2, 3, 4, 5, 6, 10}  # made/missed shot, FT, rebound, TO, foul, jump ball
+    relevant = [e for e in all_events if e["event_type"] in relevant_types]
+
+    return sorted(relevant, key=lambda e: -e["game_clock"])
+
+
+def _find_nearby_pbp_event(transition_gc: float,
+                           pbp_events: list[dict],
+                           window: float = 4.0) -> dict | None:
+    """Find the closest PBP event within a time window of a transition.
+
+    A made shot at gc=283 should suppress a transition at gc=286.58 because
+    the "release" is the shot, not a pass. The window is measured as the
+    absolute time difference (game clock counts down, so both directions).
+
+    Returns the closest matching PBP event, or None.
+    """
+    best = None
+    best_dist = float("inf")
+    for e in pbp_events:
+        dist = abs(transition_gc - e["game_clock"])
+        if dist < best_dist and dist <= window:
+            best_dist = dist
+            best = e
+    return best
+
+
+def _classify_pbp_event(event: dict) -> dict:
+    """Classify a PBP event into a structured result."""
+    etype = event["event_type"]
+    desc = event.get("description", "")
+
+    if etype == 1:
+        return {"type": "made_basket", "description": desc}
+    if etype == 2:
+        return {"type": "missed_shot", "description": desc}
+    if etype == 5:
+        return {"type": "turnover", "description": desc}
+    if etype == 4:
+        if event.get("espn_type_id") == 155:
+            return {"type": "defensive_rebound", "description": desc}
+        elif event.get("espn_type_id") == 156:
+            return {"type": "offensive_rebound", "description": desc}
+        return {"type": "rebound", "description": desc}
+    if etype == 3:
+        return {"type": "free_throw", "description": desc}
+    if etype == 6:
+        return {"type": "foul", "description": desc}
+    if etype == 10:
+        return {"type": "jump_ball", "description": desc}
+    return {"type": "unknown", "description": desc}
+
+
+def detect_passes(game: GameData, period: int, gc_start: float, gc_end: float,
+                  attacking_basket: dict | None = None,
+                  pbp_events: list[dict] | None = None) -> dict:
+    """Detect passes in a time range, cross-referenced with PBP data.
+
+    Pre-scans PBP events and creates exclusion windows around possession-
+    changing events (made shots, turnovers, rebounds, etc.).  Any handler
+    transition near a PBP event is classified by that event, not as a pass.
+
+    A genuine pass = handler A → gap → handler B (same team) with no nearby
+    PBP event explaining the transition.
     """
     handler_data = get_ball_handler(game, period, gc_start, gc_end)
     handlers = handler_data.get("handlers", [])
@@ -274,8 +350,18 @@ def detect_passes(game: GameData, period: int, gc_start: float, gc_end: float,
     if attacking_basket is None:
         attacking_basket = detect_attacking_basket(game, period)
 
+    # Pre-scan PBP events for the entire time range
+    pbp_relevant = _build_pbp_exclusion_events(pbp_events, period, gc_start, gc_end)
+
     passes = []
     turnovers = []
+    possession_changes = []
+
+    # Track which PBP events have been emitted as possession changes so we
+    # don't emit duplicate entries, but still allow the same event to suppress
+    # multiple transitions (a made basket suppresses both the shot release and
+    # the subsequent inbound).
+    emitted_pbp_events = set()
 
     for i in range(len(handlers) - 2):
         seg_a = handlers[i]
@@ -296,6 +382,10 @@ def detect_passes(game: GameData, period: int, gc_start: float, gc_end: float,
             continue
 
         gap_duration = seg_gap["duration"]
+        transition_gc = seg_a["end_gc"]
+
+        # Check if any PBP event is near this transition
+        pbp_event = _find_nearby_pbp_event(transition_gc, pbp_relevant)
 
         # Get passer and receiver positions
         passer_moment = find_moment(game, period, seg_a["end_gc"])
@@ -306,7 +396,6 @@ def detect_passes(game: GameData, period: int, gc_start: float, gc_end: float,
         pass_distance = None
 
         if passer_moment and receiver_moment:
-            # Find passer position at pass time
             for entry in passer_moment.players:
                 p = resolve_player(game, entry[1])
                 if p and p.full_name == passer:
@@ -316,7 +405,6 @@ def detect_passes(game: GameData, period: int, gc_start: float, gc_end: float,
                     passer_xy = (entry[2], entry[3])
                     break
 
-            # Find receiver position at catch time
             for entry in receiver_moment.players:
                 p = resolve_player(game, entry[1])
                 if p and p.full_name == receiver:
@@ -329,12 +417,75 @@ def detect_passes(game: GameData, period: int, gc_start: float, gc_end: float,
             if passer_pos and receiver_pos:
                 pass_distance = round(_dist2d(*passer_xy, *receiver_xy), 1)
 
+        # If a PBP event explains this transition, categorize accordingly
+        if pbp_event:
+            classified = _classify_pbp_event(pbp_event)
+            already_emitted = pbp_event["event_num"] in emitted_pbp_events
+            ptype = classified["type"]
+
+            if ptype == "made_basket":
+                if not already_emitted:
+                    emitted_pbp_events.add(pbp_event["event_num"])
+                    possession_changes.append({
+                        "type": "made_basket",
+                        "scorer": passer,
+                        "scorer_team": passer_team,
+                        "time_gc": round(transition_gc, 2),
+                        "description": classified["description"],
+                    })
+                continue
+
+            if ptype == "missed_shot":
+                # Shot attempt, not a pass — skip silently
+                continue
+
+            if ptype in ("defensive_rebound", "offensive_rebound", "rebound"):
+                if not already_emitted:
+                    emitted_pbp_events.add(pbp_event["event_num"])
+                    possession_changes.append({
+                        "type": ptype,
+                        "rebounder": receiver,
+                        "rebounder_team": receiver_team,
+                        "time_gc": round(seg_b["start_gc"], 2),
+                        "description": classified["description"],
+                    })
+                continue
+
+            if ptype == "turnover":
+                if not already_emitted:
+                    emitted_pbp_events.add(pbp_event["event_num"])
+                    turnovers.append({
+                        "passer": passer,
+                        "receiver": receiver,
+                        "passer_team": passer_team,
+                        "receiver_team": receiver_team,
+                        "time_gc": round(transition_gc, 2),
+                        "flight_time": round(gap_duration, 2),
+                        "passer_position": passer_pos,
+                        "receiver_position": receiver_pos,
+                        "distance_ft": pass_distance,
+                        "type": "turnover",
+                        "description": classified["description"],
+                    })
+                continue
+
+            if ptype in ("free_throw", "foul", "jump_ball"):
+                if not already_emitted:
+                    emitted_pbp_events.add(pbp_event["event_num"])
+                    possession_changes.append({
+                        "type": ptype,
+                        "time_gc": round(transition_gc, 2),
+                        "description": classified["description"],
+                    })
+                continue
+
+        # No PBP event — use tracking-only logic
         pass_info = {
             "passer": passer,
             "receiver": receiver,
             "passer_team": passer_team,
             "receiver_team": receiver_team,
-            "time_gc": round(seg_a["end_gc"], 2),
+            "time_gc": round(transition_gc, 2),
             "flight_time": round(gap_duration, 2),
             "passer_position": passer_pos,
             "receiver_position": receiver_pos,
@@ -350,6 +501,7 @@ def detect_passes(game: GameData, period: int, gc_start: float, gc_end: float,
     return {
         "passes": passes,
         "turnovers": turnovers,
+        "possession_changes": possession_changes,
         "period": period,
         "gc_start": round(gc_start, 2),
         "gc_end": round(gc_end, 2),
@@ -655,7 +807,7 @@ def get_possession_summary(game: GameData, pbp_events: list[dict],
     attacking_basket = detect_attacking_basket(game, period)
 
     handler = get_ball_handler(game, period, gc_start, gc_end)
-    passes = detect_passes(game, period, gc_start, gc_end, attacking_basket)
+    passes = detect_passes(game, period, gc_start, gc_end, attacking_basket, pbp_events)
     pbp = get_play_by_play(game, pbp_events, period, gc_start, gc_end)
 
     # Positions at start, middle, and end

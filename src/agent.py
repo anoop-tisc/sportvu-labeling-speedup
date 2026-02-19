@@ -75,9 +75,10 @@ TOOL_SCHEMAS = [
     {
         "name": "detect_passes",
         "description": (
-            "Detect passes in a time range. A pass is handler A losing the ball, "
-            "a gap, then handler B gaining it. Returns passer, receiver, positions (described "
-            "by court landmarks), distance, and flight time. Also detects turnovers (ball going to other team)."
+            "Detect passes in a time range, cross-referenced with play-by-play data. "
+            "Returns passes, turnovers, and possession changes (made baskets, rebounds, etc.). "
+            "A pass is handler A → gap → handler B on the same team with no PBP event explaining it. "
+            "Transitions caused by made baskets, rebounds, or other PBP events are categorized separately."
         ),
         "input_schema": {
             "type": "object",
@@ -333,6 +334,7 @@ def execute_tool(tool_name: str, tool_input: dict, game: GameData,
             result = detect_passes(
                 game, tool_input["period"], tool_input["gc_start"], tool_input["gc_end"],
                 attacking_basket=attacking_basket,
+                pbp_events=pbp_events,
             )
         elif tool_name == "get_defensive_matchups":
             result = get_defensive_matchups(
