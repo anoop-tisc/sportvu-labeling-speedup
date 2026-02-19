@@ -20,8 +20,6 @@ matplotlib.use("Agg")
 import numpy as np
 import matplotlib.pyplot as plt
 from PIL import Image
-from google import genai
-
 from src.sportvu_loader import load_game, find_moment
 from src.pbp import fetch_pbp
 from src.visualize import (
@@ -313,7 +311,7 @@ def _setup_3d_ax(ax):
     ax.set_zlabel('ft', fontsize=7, color='#666')
     ax.view_init(elev=30, azim=-55)
     ax.set_box_aspect([94, 50, 18])
-    ax.dist = 5.5  # zoom in (default is ~10)
+    ax.dist = 4.0  # zoom in (default is ~10)
     # Lighten the pane backgrounds
     ax.xaxis.pane.fill = False
     ax.yaxis.pane.fill = False
@@ -395,7 +393,7 @@ def render_synced_video(
                           color="black", fontsize=16, fontweight="bold")
     clock_text = fig.text(0.5, 0.91, "", ha="center", va="center",
                           color="black", fontsize=13)
-    commentary_text = fig.text(0.5, 0.08, "" if use_3d else "", ha="center",
+    commentary_text = fig.text(0.5, 0.18, "" if use_3d else "", ha="center",
                                va="top", color="black", fontsize=10,
                                linespacing=1.4, fontstyle="italic")
 
@@ -621,6 +619,7 @@ def main():
             print("Error: GEMINI_API_KEY not set. Add it to .env or environment.")
             sys.exit(1)
 
+        from google import genai
         client = genai.Client(api_key=api_key)
         video_fps = _probe_fps(args.video)
 

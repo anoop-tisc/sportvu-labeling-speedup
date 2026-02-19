@@ -433,3 +433,69 @@ def run_agent(question: str, game: GameData, pbp_events: list[dict],
             return "\n".join(text_parts)
 
     return "[Agent reached maximum turns without a final answer]"
+
+
+def chat_agent(user_message: str, messages: list, game: GameData,
+               pbp_events: list[dict], period: int, gc_start: float,
+               gc_end: float, team_abbr: str,
+               verbose: bool = False) -> tuple[str, list]:
+    """Multi-turn chat wrapper around the agent loop.
+
+    Accepts prior conversation history in `messages`, appends the new user
+    message, runs the agent loop, and returns (response_text, updated_messages).
+    """
+    client = Anthropic()
+    attacking_basket = detect_attacking_basket(game, period)
+    system_prompt = build_system_prompt(game, period, gc_start, gc_end, team_abbr)
+
+    # Append user message to conversation
+    messages = list(messages)  # copy so caller's list isn't mutated
+    messages.append({"role": "user", "content": user_message})
+
+    for turn in range(MAX_AGENT_TURNS):
+        if verbose:
+            print(f"  [Agent turn {turn + 1}]")
+
+        response = client.messages.create(
+            model=CLAUDE_MODEL,
+            max_tokens=4096,
+            system=system_prompt,
+            tools=TOOL_SCHEMAS,
+            messages=messages,
+        )
+
+        if response.stop_reason == "tool_use":
+            assistant_content = response.content
+            tool_results = []
+
+            for block in assistant_content:
+                if block.type == "tool_use":
+                    if verbose:
+                        print(f"    → {block.name}({json.dumps(block.input)})")
+                    result = execute_tool(
+                        block.name, block.input, game, pbp_events, attacking_basket,
+                    )
+                    if verbose:
+                        preview = result[:200] + "..." if len(result) > 200 else result
+                        print(f"    ← {preview}")
+                    tool_results.append({
+                        "type": "tool_result",
+                        "tool_use_id": block.id,
+                        "content": result,
+                    })
+
+            messages.append({"role": "assistant", "content": assistant_content})
+            messages.append({"role": "user", "content": tool_results})
+        else:
+            # Final text response — append and return
+            text_parts = []
+            for block in response.content:
+                if hasattr(block, "text"):
+                    text_parts.append(block.text)
+            reply = "\n".join(text_parts)
+            messages.append({"role": "assistant", "content": response.content})
+            return reply, messages
+
+    reply = "[Agent reached maximum turns without a final answer]"
+    messages.append({"role": "assistant", "content": reply})
+    return reply, messages
