@@ -53,7 +53,8 @@ def normalize_coords(x: float, y: float, attacking_right: bool) -> tuple[float, 
 # Landmark definitions
 # ---------------------------------------------------------------------------
 
-LANDMARK_RADIUS = 1.5  # ft — proximity threshold for points and line tolerance
+LANDMARK_POINT_RADIUS = 4.0   # ft — "at the X" if within this distance of a point
+LANDMARK_LINE_TOLERANCE = 1.5  # ft — "on the X" if within this distance of a line
 
 
 @dataclass
@@ -214,15 +215,21 @@ def _distance_to_line(px: float, py: float, line: LandmarkLine) -> float:
 # ---------------------------------------------------------------------------
 
 def describe_position(x: float, y: float) -> dict:
-    """Describe a normalized (x, y) position using the nearest court landmark.
+    """Describe a normalized (x, y) position using court landmarks.
 
     Coordinates must be normalized so the basket is at (5.25, 25).
 
+    Priority:
+      1. Within point radius → "at the left elbow"
+      2. On a line + near a point → "on the left lane line near the left elbow"
+      3. On a line, no nearby point → "on the three-point line, left side"
+      4. Fallback → "near the left wing"
+
     Returns dict with:
-      - description: human-readable (e.g. "at the left elbow")
-      - landmark: landmark name
+      - description: human-readable
+      - landmark: primary landmark name
       - relation: "at" | "on" | "near"
-      - distance: distance to the landmark (ft)
+      - distance: distance to the primary landmark (ft)
       - side: "left" | "right" | "center"
       - distance_to_basket: float (feet)
     """
@@ -236,7 +243,7 @@ def describe_position(x: float, y: float) -> dict:
     else:
         side = "center"
 
-    # 1. Check landmark points (most specific)
+    # Find nearest point and nearest line
     best_point = None
     best_point_dist = float("inf")
     for lp in LANDMARK_POINTS:
@@ -245,7 +252,16 @@ def describe_position(x: float, y: float) -> dict:
             best_point_dist = d
             best_point = lp
 
-    if best_point_dist <= LANDMARK_RADIUS:
+    best_line = None
+    best_line_dist = float("inf")
+    for ll in LANDMARK_LINES:
+        d = _distance_to_line(x, y, ll)
+        if d < best_line_dist:
+            best_line_dist = d
+            best_line = ll
+
+    # 1. Within point radius → "at the X"
+    if best_point_dist <= LANDMARK_POINT_RADIUS:
         return {
             "description": f"at the {best_point.name}",
             "landmark": best_point.name,
@@ -255,18 +271,15 @@ def describe_position(x: float, y: float) -> dict:
             "distance_to_basket": round(dist_basket, 1),
         }
 
-    # 2. Check landmark lines
-    best_line = None
-    best_line_dist = float("inf")
-    for ll in LANDMARK_LINES:
-        d = _distance_to_line(x, y, ll)
-        if d < best_line_dist:
-            best_line_dist = d
-            best_line = ll
-
-    if best_line_dist <= LANDMARK_RADIUS:
+    # 2. On a line
+    if best_line_dist <= LANDMARK_LINE_TOLERANCE:
+        # Also mention nearest point for context
+        if best_point_dist <= 10.0:
+            desc = f"on the {best_line.name} near the {best_point.name}"
+        else:
+            desc = f"on the {best_line.name}, {side} side"
         return {
-            "description": f"on the {best_line.name}",
+            "description": desc,
             "landmark": best_line.name,
             "relation": "on",
             "distance": round(best_line_dist, 1),
@@ -274,25 +287,15 @@ def describe_position(x: float, y: float) -> dict:
             "distance_to_basket": round(dist_basket, 1),
         }
 
-    # 3. Fallback: nearest landmark (point or line, whichever closer)
-    if best_point_dist <= best_line_dist:
-        return {
-            "description": f"near the {best_point.name}",
-            "landmark": best_point.name,
-            "relation": "near",
-            "distance": round(best_point_dist, 1),
-            "side": side,
-            "distance_to_basket": round(dist_basket, 1),
-        }
-    else:
-        return {
-            "description": f"near the {best_line.name}",
-            "landmark": best_line.name,
-            "relation": "near",
-            "distance": round(best_line_dist, 1),
-            "side": side,
-            "distance_to_basket": round(dist_basket, 1),
-        }
+    # 3. Fallback: always prefer nearest point (more specific than lines)
+    return {
+        "description": f"near the {best_point.name}",
+        "landmark": best_point.name,
+        "relation": "near",
+        "distance": round(best_point_dist, 1),
+        "side": side,
+        "distance_to_basket": round(dist_basket, 1),
+    }
 
 
 def detect_attacking_basket(game, period: int) -> dict[int, bool]:

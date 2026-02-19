@@ -244,7 +244,10 @@ Game: {game.game_id} — {game.visitor_team['abbreviation']} @ {game.home_team['
 Home: {game.home_team['name']} ({game.home_team['abbreviation']})
 Away: {game.visitor_team['name']} ({game.visitor_team['abbreviation']})
 
-Current possession: Period {period}, {_fmt_clock(gc_start)} to {_fmt_clock(gc_end)}, {team_abbr} has the ball.
+Current clip: Period {period}, gc_start={gc_start} ({_fmt_clock(gc_start)}) to gc_end={gc_end} ({_fmt_clock(gc_end)}), {team_abbr} has the ball.
+
+IMPORTANT: All tools accept raw game clock seconds. The clip starts at gc={gc_start} and ends at gc={gc_end}. \
+Always pass these raw numbers to tools — do NOT convert from mm:ss yourself.
 
 Use your tools to query exact tracking data. Do NOT guess positions or handlers — always call a tool first.
 
@@ -288,14 +291,39 @@ def _fmt_clock(gc: float) -> str:
     return f"{mins}:{secs:04.1f}"
 
 
+def _find_offense_team_id(game: GameData, pbp_events: list[dict],
+                          period: int, game_clock: float) -> int | None:
+    """Find the team with possession at a given game clock from PBP data.
+
+    Looks for the most recent PBP event at or after game_clock (since clock
+    counts down) that has a team associated with it.  Returns the SportVU
+    team_id (int), or None if unknown.
+    """
+    from src.possession import identify_possessions
+    possessions = identify_possessions(pbp_events, game)
+    for poss in possessions:
+        if poss.period == period and poss.end_gc <= game_clock <= poss.start_gc:
+            # Map ESPN team ID / abbreviation back to SportVU team_id
+            if poss.team_abbr == game.home_team["abbreviation"]:
+                return game.home_team["teamid"]
+            elif poss.team_abbr == game.visitor_team["abbreviation"]:
+                return game.visitor_team["teamid"]
+    return None
+
+
 def execute_tool(tool_name: str, tool_input: dict, game: GameData,
                  pbp_events: list[dict], attacking_basket: dict) -> str:
     """Execute a tool call and return the result as a JSON string."""
     try:
         if tool_name == "get_player_positions":
+            offense_team_id = _find_offense_team_id(
+                game, pbp_events,
+                tool_input["period"], tool_input["game_clock"],
+            )
             result = get_player_positions(
                 game, tool_input["period"], tool_input["game_clock"],
                 attacking_basket=attacking_basket,
+                offense_team_id=offense_team_id,
             )
         elif tool_name == "get_ball_handler":
             result = get_ball_handler(

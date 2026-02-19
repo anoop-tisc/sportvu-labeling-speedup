@@ -11,7 +11,7 @@ from matplotlib.patches import Arc, Circle
 from pathlib import Path
 
 from src.court import (
-    LANDMARK_POINTS, LANDMARK_LINES, LANDMARK_RADIUS,
+    LANDMARK_POINTS, LANDMARK_LINES, LANDMARK_POINT_RADIUS,
     THREE_POINT_ARC_RADIUS,
 )
 from src.visualize import draw_court
@@ -58,13 +58,13 @@ def generate_landmark_map(output_path: str = "outputs/court_landmarks.png"):
     # --- Draw landmark points ---
     for lp in LANDMARK_POINTS:
         px, py = _to_plot(lp.x, lp.y)
-        circle = Circle((px, py), LANDMARK_RADIUS, color="red", alpha=0.35, zorder=6)
+        circle = Circle((px, py), LANDMARK_POINT_RADIUS, color="red", alpha=0.35, zorder=6)
         ax.add_patch(circle)
         ax.plot(px, py, "o", color="red", markersize=4, zorder=7)
 
         # Label
         # Offset label slightly to avoid overlap with the point
-        offset_y = LANDMARK_RADIUS + 1.5
+        offset_y = LANDMARK_POINT_RADIUS + 1.5
         label_y = py - offset_y  # go below (more negative in plot coords)
         # For points near the bottom of the court (low py), put label above
         if py < -40:

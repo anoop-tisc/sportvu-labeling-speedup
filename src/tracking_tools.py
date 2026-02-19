@@ -58,10 +58,15 @@ def _resolve_player_info(game: GameData, team_id: int, player_id: int) -> dict:
 
 
 def get_player_positions(game: GameData, period: int, game_clock: float,
-                         attacking_basket: dict | None = None) -> dict:
+                         attacking_basket: dict | None = None,
+                         offense_team_id: int | None = None) -> dict:
     """Get positions of all players and ball at a specific game clock.
 
-    Returns snapshot with zones, distances, and raw coordinates.
+    All positions are described from the offensive team's perspective.
+    If offense_team_id is provided, that team's basket direction is used
+    for all 10 players. Otherwise falls back to ball proximity.
+
+    Returns snapshot with landmarks, distances, and raw coordinates.
     """
     moment = find_moment(game, period, game_clock)
     if not moment:
@@ -71,6 +76,22 @@ def get_player_positions(game: GameData, period: int, game_clock: float,
         attacking_basket = detect_attacking_basket(game, period)
 
     ball, players = _get_ball_and_players(moment)
+
+    # Determine offensive perspective — one direction for all players
+    if offense_team_id is not None:
+        offense_attacking_right = attacking_basket.get(offense_team_id, False)
+    elif ball:
+        # Fallback: closest player to ball
+        bx, by = ball[2], ball[3]
+        min_dist = float("inf")
+        offense_attacking_right = False
+        for entry in players:
+            d = _dist2d(bx, by, entry[2], entry[3])
+            if d < min_dist:
+                min_dist = d
+                offense_attacking_right = attacking_basket.get(entry[0], False)
+    else:
+        offense_attacking_right = False
 
     result = {
         "period": period,
@@ -91,9 +112,8 @@ def get_player_positions(game: GameData, period: int, game_clock: float,
         team_id, player_id, x, y, z = entry[0], entry[1], entry[2], entry[3], entry[4]
         info = _resolve_player_info(game, team_id, player_id)
 
-        # Normalize for position description
-        attacking_right = attacking_basket.get(team_id, False)
-        nx, ny = normalize_coords(x, y, attacking_right)
+        # Normalize ALL players from offensive team's perspective
+        nx, ny = normalize_coords(x, y, offense_attacking_right)
         pos = describe_position(nx, ny)
 
         info.update({
