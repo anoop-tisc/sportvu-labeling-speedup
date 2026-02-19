@@ -77,44 +77,51 @@ def classify_zone(x: float, y: float) -> dict:
     if dist <= RESTRICTED_AREA_RADIUS:
         return {"zone": "restricted area", "side": side, "distance_to_basket": round(dist, 1), "beyond_arc": False}
 
-    # Priority 3: Paint
+    # Priority 3: Elbows (at the corners of the free-throw line, check before paint)
+    if 17 <= x <= 22:
+        if 14 <= y <= 19:
+            return {"zone": "left elbow", "side": "left", "distance_to_basket": round(dist, 1), "beyond_arc": False}
+        if 31 <= y <= 36:
+            return {"zone": "right elbow", "side": "right", "distance_to_basket": round(dist, 1), "beyond_arc": False}
+
+    # Priority 4: Paint — split into low post (near basket) and high post (near FT line)
     if x <= PAINT_DEPTH and PAINT_Y_MIN <= y <= PAINT_Y_MAX:
         if y < 25:
             paint_side = "left"
-            zone = "paint (left block)" if x <= 8 else "paint (left)"
+            zone = "left low post" if x <= 10 else "left high post"
         elif y > 25:
             paint_side = "right"
-            zone = "paint (right block)" if x <= 8 else "paint (right)"
+            zone = "right low post" if x <= 10 else "right high post"
         else:
             paint_side = "center"
-            zone = "paint (center)"
+            zone = "left high post" if x <= 10 else "right high post"
         return {"zone": zone, "side": paint_side, "distance_to_basket": round(dist, 1), "beyond_arc": False}
 
-    # Priority 4: Elbows (near free-throw line, at paint edges)
-    if 17 <= x <= 22:
-        if 14 <= y <= 20:
-            return {"zone": "left elbow", "side": "left", "distance_to_basket": round(dist, 1), "beyond_arc": False}
-        if 30 <= y <= 36:
-            return {"zone": "right elbow", "side": "right", "distance_to_basket": round(dist, 1), "beyond_arc": False}
+    # Priority 5: Short corner (baseline area outside paint, inside 3pt line)
+    if x <= 14 and not beyond_arc and not (PAINT_Y_MIN <= y <= PAINT_Y_MAX):
+        if y < 25:
+            return {"zone": "left short corner", "side": "left", "distance_to_basket": round(dist, 1), "beyond_arc": False}
+        else:
+            return {"zone": "right short corner", "side": "right", "distance_to_basket": round(dist, 1), "beyond_arc": False}
 
-    # Priority 5-7: Three-point zones
+    # Priority 6: Three-point zones
     if beyond_arc:
         # Corner threes
         if y < 11 and x < 14:
-            return {"zone": "left corner three", "side": "left", "distance_to_basket": round(dist, 1), "beyond_arc": True}
+            return {"zone": "left corner", "side": "left", "distance_to_basket": round(dist, 1), "beyond_arc": True}
         if y > 39 and x < 14:
-            return {"zone": "right corner three", "side": "right", "distance_to_basket": round(dist, 1), "beyond_arc": True}
+            return {"zone": "right corner", "side": "right", "distance_to_basket": round(dist, 1), "beyond_arc": True}
 
         # Wing threes
         if y < 22:
-            return {"zone": "left wing three", "side": "left", "distance_to_basket": round(dist, 1), "beyond_arc": True}
+            return {"zone": "left wing", "side": "left", "distance_to_basket": round(dist, 1), "beyond_arc": True}
         if y > 28:
-            return {"zone": "right wing three", "side": "right", "distance_to_basket": round(dist, 1), "beyond_arc": True}
+            return {"zone": "right wing", "side": "right", "distance_to_basket": round(dist, 1), "beyond_arc": True}
 
-        # Top of key/arc
+        # Top of the arc
         return {"zone": "top of the arc", "side": "center", "distance_to_basket": round(dist, 1), "beyond_arc": True}
 
-    # Priority 8: Mid-range
+    # Priority 7: Mid-range
     if y < 22:
         zone = "left mid-range"
         mr_side = "left"
@@ -122,7 +129,7 @@ def classify_zone(x: float, y: float) -> dict:
         zone = "right mid-range"
         mr_side = "right"
     else:
-        zone = "top mid-range"
+        zone = "top of the key"
         mr_side = "center"
 
     return {"zone": zone, "side": mr_side, "distance_to_basket": round(dist, 1), "beyond_arc": False}
@@ -225,17 +232,22 @@ if __name__ == "__main__":
     test_points = [
         (5.25, 25.0, "basket center → restricted area"),
         (3.0, 25.0, "under basket → restricted area"),
-        (10.0, 20.0, "paint left → paint (left)"),
-        (10.0, 30.0, "paint right → paint (right)"),
+        (7.0, 20.0, "paint near basket → left low post"),
+        (7.0, 30.0, "paint near basket → right low post"),
+        (15.0, 20.0, "paint near FT line → left high post"),
+        (15.0, 30.0, "paint near FT line → right high post"),
         (19.0, 17.0, "left elbow area"),
         (19.0, 33.0, "right elbow area"),
-        (5.0, 3.0, "left corner → left corner three"),
-        (5.0, 47.0, "right corner → right corner three"),
-        (30.0, 10.0, "left wing → left wing three"),
-        (30.0, 40.0, "right wing → right wing three"),
-        (30.0, 25.0, "top of arc → top of the arc"),
+        (5.0, 3.0, "baseline outside paint → left short corner"),
+        (5.0, 47.0, "baseline outside paint → right short corner"),
+        (5.0, 8.0, "left corner three"),
+        (5.0, 42.0, "right corner three"),
+        (30.0, 10.0, "left wing"),
+        (30.0, 40.0, "right wing"),
+        (30.0, 25.0, "top of the arc"),
         (15.0, 15.0, "left mid-range"),
         (15.0, 35.0, "right mid-range"),
+        (25.0, 25.0, "top of the key"),
         (60.0, 25.0, "backcourt"),
     ]
     for x, y, desc in test_points:
