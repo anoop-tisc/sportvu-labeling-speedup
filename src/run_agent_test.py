@@ -14,8 +14,8 @@ from src.agent import run_agent
 GAME_PATH = "data/0021500492.json"
 GAME_ID = "0021500492"
 PERIOD = 1
-GC_START = 290.0
-GC_END = 282.0
+GC_START = 710.0
+GC_END = 697.0
 TEAM = "TOR"
 
 QUESTIONS = [
@@ -24,7 +24,7 @@ QUESTIONS = [
     "What are the defensive matchups and how tight is the coverage?",
 ]
 
-OUTPUT_PATH = "outputs/agent_test_output_v3.md"
+OUTPUT_PATH = "outputs/agent_test_output_v4.md"
 
 
 def main():
@@ -53,11 +53,11 @@ def main():
     gc_end_ss = GC_END - gc_end_mm * 60
 
     lines = []
-    lines.append(f"# Agent Test Output v3 — Q1 {gc_start_mm}:{gc_start_ss:04.1f} to {gc_end_mm}:{gc_end_ss:04.1f}")
+    lines.append(f"# Agent Test Output v4 — Q1 {gc_start_mm}:{gc_start_ss:04.1f} to {gc_end_mm}:{gc_end_ss:04.1f}")
     lines.append("")
     lines.append(f"**Game:** {GAME_ID} — CHA @ TOR, 2016-01-01")
     lines.append(f"**Segment:** Period {PERIOD}, game clock {GC_START}s ({gc_start_mm}:{gc_start_ss:04.1f}) to {GC_END}s ({gc_end_mm}:{gc_end_ss:04.1f})")
-    lines.append("**Changes since v2:** Replaced zone classification with landmark-based position descriptions. All positions described from offensive team's perspective. Fixed system prompt to include raw gc values.")
+    lines.append("**Changes since v3:** Switched to clip2 time range (Q1 11:50-11:37) with SAM 3 auto-alignment for broadcast-to-tracking sync.")
     lines.append("")
 
     for i, question in enumerate(QUESTIONS):

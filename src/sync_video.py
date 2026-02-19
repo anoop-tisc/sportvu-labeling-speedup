@@ -591,13 +591,31 @@ def main():
                         help="Disable PBP commentary overlay")
     parser.add_argument("--3d", dest="use_3d", action="store_true",
                         help="Render court visualization in 3D (shows ball height)")
+    parser.add_argument("--gc-start", type=float,
+                        help="Game clock start for auto_align (higher value)")
+    parser.add_argument("--gc-end", type=float,
+                        help="Game clock end for auto_align (lower value)")
     args = parser.parse_args()
 
-    # Load alignment from cache, or run OCR
+    # Load alignment: cached → auto_align → OCR fallback
     if args.cache_alignment and Path(args.cache_alignment).exists():
         slope, intercept, video_fps = load_alignment(args.cache_alignment)
-        markers = []
+    elif args.gc_start is not None and args.gc_end is not None:
+        from src.auto_align import auto_align as run_auto_align
+        result = run_auto_align(
+            video_path=args.video,
+            game_json_path=args.game,
+            period=args.period,
+            gc_start=args.gc_start,
+            gc_end=args.gc_end,
+        )
+        slope, intercept = result["slope"], result["intercept"]
+        video_fps = result["video_fps"]
+        if args.cache_alignment:
+            save_alignment(args.cache_alignment, slope, intercept,
+                           result["marker"], video_fps)
     else:
+        # OCR-only fallback
         api_key = os.environ.get("GEMINI_API_KEY")
         if not api_key:
             print("Error: GEMINI_API_KEY not set. Add it to .env or environment.")
@@ -606,7 +624,6 @@ def main():
         client = genai.Client(api_key=api_key)
         video_fps = _probe_fps(args.video)
 
-        # Binary-search for the first clock-second transition
         marker = find_clock_transition(args.video, client)
         slope, intercept = compute_alignment(marker, video_fps)
 
