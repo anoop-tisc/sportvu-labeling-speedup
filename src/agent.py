@@ -27,8 +27,9 @@ TOOL_SCHEMAS = [
         "name": "get_player_positions",
         "description": (
             "Get the positions of all 10 players and the ball at a specific game clock time. "
-            "Returns each player's court zone (e.g., left wing three, paint, restricted area), "
-            "distance to basket, team, jersey number, and raw (x,y) coordinates."
+            "Returns each player's position relative to court landmarks (e.g., 'at the left elbow', "
+            "'on the three-point line', 'near the right wing'), distance to basket, team, jersey number, "
+            "and raw (x,y) coordinates."
         ),
         "input_schema": {
             "type": "object",
@@ -75,8 +76,8 @@ TOOL_SCHEMAS = [
         "name": "detect_passes",
         "description": (
             "Detect passes in a time range. A pass is handler A losing the ball, "
-            "a gap, then handler B gaining it. Returns passer, receiver, zones, distance, "
-            "and flight time. Also detects turnovers (ball going to other team)."
+            "a gap, then handler B gaining it. Returns passer, receiver, positions (described "
+            "by court landmarks), distance, and flight time. Also detects turnovers (ball going to other team)."
         ),
         "input_schema": {
             "type": "object",
@@ -128,7 +129,7 @@ TOOL_SCHEMAS = [
         "name": "get_player_trajectory",
         "description": (
             "Track a specific player's movement over a time range. Returns sampled positions "
-            "at ~0.5s intervals with speed, zone, total distance, and zone transitions."
+            "at ~0.5s intervals with speed, court landmark, total distance, and position transitions."
         ),
         "input_schema": {
             "type": "object",
@@ -247,8 +248,8 @@ Current possession: Period {period}, {_fmt_clock(gc_start)} to {_fmt_clock(gc_en
 
 Use your tools to query exact tracking data. Do NOT guess positions or handlers — always call a tool first.
 
-Report positions using basketball zone names (left wing three, right corner three, paint, restricted area, \
-top of the arc, mid-range, elbow, backcourt, etc.).
+Report positions using court landmark descriptions (e.g., "at the left elbow", "on the three-point line", \
+"near the right wing", "at the basket", "on the free throw line", etc.).
 
 Left/right convention: from the OFFENSIVE player's perspective facing the basket.
 - "Left wing" = to the player's left when facing the basket.
@@ -258,9 +259,9 @@ Game clock: counts DOWN from 720.0 (12:00) to 0.0 per quarter. gc_start > gc_end
 To convert: 11:00 = 660.0s, 5:30 = 330.0s, 1:15 = 75.0s.
 
 You CAN answer from tracking data:
-- Player positions and zones at any moment
+- Player positions relative to court landmarks at any moment
 - Ball handler identity and timeline
-- Ball movement path and passes (passer, receiver, zones)
+- Ball movement path and passes (passer, receiver, positions)
 - Defensive matchups and coverage tightness
 - Player trajectories, speed, and distance covered
 - Shot location (from ball trajectory arc)
@@ -276,7 +277,7 @@ For those, say "Cannot determine from tracking data alone."
 
 When answering:
 1. Start with get_possession_summary for broad context, or use specific tools for targeted questions.
-2. Be precise: cite game clock times, zone names, and distances.
+2. Be precise: cite game clock times, landmark names, and distances.
 3. If data seems inconsistent, query multiple time points to confirm.
 4. Keep answers concise and factual."""
 

@@ -1,7 +1,7 @@
-"""Tests for court zone classification."""
+"""Tests for court landmark-based position description."""
 
 import pytest
-from src.court import classify_zone, normalize_coords, distance_to_basket
+from src.court import describe_position, normalize_coords, distance_to_basket
 
 
 class TestDistanceToBasket:
@@ -15,10 +15,11 @@ class TestDistanceToBasket:
 
 
 class TestNormalizeCoords:
-    def test_attacking_left_no_change(self):
+    def test_attacking_left_mirrors_y(self):
+        # When attacking left, y is mirrored: y = 50 - y
         x, y = normalize_coords(20.0, 30.0, attacking_right=False)
         assert x == 20.0
-        assert y == 30.0
+        assert y == 20.0  # 50 - 30
 
     def test_attacking_right_mirrors_x(self):
         x, y = normalize_coords(80.0, 30.0, attacking_right=True)
@@ -26,66 +27,104 @@ class TestNormalizeCoords:
         assert y == 30.0  # y unchanged
 
 
-class TestClassifyZone:
-    def test_restricted_area(self):
-        zone = classify_zone(5.25, 25.0)
-        assert zone["zone"] == "restricted area"
-        assert zone["distance_to_basket"] == 0.0
+class TestDescribePosition:
+    # --- "at" relation (landmark points) ---
+    def test_at_basket(self):
+        result = describe_position(5.25, 25.0)
+        assert result["relation"] == "at"
+        assert result["landmark"] == "basket"
+        assert result["distance"] == 0.0
 
-    def test_restricted_area_near_basket(self):
-        zone = classify_zone(3.0, 25.0)
-        assert zone["zone"] == "restricted area"
+    def test_at_left_elbow(self):
+        result = describe_position(19.0, 17.0)
+        assert result["relation"] == "at"
+        assert result["landmark"] == "left elbow"
 
-    def test_paint_left(self):
-        zone = classify_zone(10.0, 20.0)
-        assert "paint" in zone["zone"]
-        assert zone["side"] == "left"
+    def test_at_right_elbow(self):
+        result = describe_position(19.0, 33.0)
+        assert result["relation"] == "at"
+        assert result["landmark"] == "right elbow"
 
-    def test_paint_right(self):
-        zone = classify_zone(10.0, 30.0)
-        assert "paint" in zone["zone"]
-        assert zone["side"] == "right"
+    def test_at_left_corner(self):
+        result = describe_position(5.0, 3.0)
+        assert result["relation"] == "at"
+        assert result["landmark"] == "left corner"
 
-    def test_left_corner_three(self):
-        zone = classify_zone(5.0, 3.0)
-        assert zone["zone"] == "left corner three"
-        assert zone["beyond_arc"] is True
+    def test_at_right_corner(self):
+        result = describe_position(5.0, 47.0)
+        assert result["relation"] == "at"
+        assert result["landmark"] == "right corner"
 
-    def test_right_corner_three(self):
-        zone = classify_zone(5.0, 47.0)
-        assert zone["zone"] == "right corner three"
-        assert zone["beyond_arc"] is True
+    def test_at_the_logo(self):
+        result = describe_position(47.0, 25.0)
+        assert result["relation"] == "at"
+        assert result["landmark"] == "the logo"
 
-    def test_left_wing_three(self):
-        zone = classify_zone(30.0, 10.0)
-        assert zone["zone"] == "left wing three"
-        assert zone["beyond_arc"] is True
+    def test_at_left_wing(self):
+        result = describe_position(28.0, 8.0)
+        assert result["relation"] == "at"
+        assert result["landmark"] == "left wing"
 
-    def test_right_wing_three(self):
-        zone = classify_zone(30.0, 40.0)
-        assert zone["zone"] == "right wing three"
-        assert zone["beyond_arc"] is True
+    def test_at_right_wing(self):
+        result = describe_position(28.0, 42.0)
+        assert result["relation"] == "at"
+        assert result["landmark"] == "right wing"
 
-    def test_top_of_arc(self):
-        zone = classify_zone(30.0, 25.0)
-        assert zone["zone"] == "top of the arc"
-        assert zone["beyond_arc"] is True
+    def test_at_top_of_the_arc(self):
+        result = describe_position(29.0, 25.0)
+        assert result["relation"] == "at"
+        assert result["landmark"] == "top of the arc"
 
-    def test_backcourt(self):
-        zone = classify_zone(60.0, 25.0)
-        assert zone["zone"] == "backcourt"
+    # --- "on" relation (landmark lines) ---
+    def test_on_baseline(self):
+        # (0, 25) is on the baseline, not near any point
+        result = describe_position(0.0, 25.0)
+        assert result["relation"] == "on"
+        assert result["landmark"] == "baseline"
 
-    def test_left_midrange(self):
-        zone = classify_zone(15.0, 15.0)
-        assert zone["zone"] == "left mid-range"
-        assert zone["beyond_arc"] is False
+    def test_on_left_lane_line(self):
+        result = describe_position(10.0, 17.0)
+        assert result["relation"] == "on"
+        assert result["landmark"] == "left lane line"
 
-    def test_right_midrange(self):
-        zone = classify_zone(15.0, 35.0)
-        assert zone["zone"] == "right mid-range"
-        assert zone["beyond_arc"] is False
+    # --- "near" relation (fallback) ---
+    def test_near_fallback(self):
+        # A point in the mid-range, not close to any point or line
+        result = describe_position(15.0, 10.0)
+        assert result["relation"] == "near"
+        assert "near" in result["description"]
 
-    def test_top_midrange(self):
-        zone = classify_zone(20.0, 25.0)
-        assert zone["zone"] == "top mid-range"
-        assert zone["beyond_arc"] is False
+    # --- Side detection ---
+    def test_side_left(self):
+        result = describe_position(19.0, 17.0)
+        assert result["side"] == "left"
+
+    def test_side_right(self):
+        result = describe_position(19.0, 33.0)
+        assert result["side"] == "right"
+
+    def test_side_center(self):
+        result = describe_position(29.0, 25.0)
+        assert result["side"] == "center"
+
+    # --- Return schema ---
+    def test_return_keys(self):
+        result = describe_position(19.0, 17.0)
+        assert "description" in result
+        assert "landmark" in result
+        assert "relation" in result
+        assert "distance" in result
+        assert "side" in result
+        assert "distance_to_basket" in result
+
+    def test_distance_to_basket_in_result(self):
+        result = describe_position(5.25, 25.0)
+        assert result["distance_to_basket"] == 0.0
+
+    # --- Points take priority over lines ---
+    def test_point_priority_over_line(self):
+        # Left elbow is at (19, 17) — exactly at the corner of the FT line and lane line.
+        # The point should take priority over both lines.
+        result = describe_position(19.0, 17.0)
+        assert result["relation"] == "at"
+        assert result["landmark"] == "left elbow"

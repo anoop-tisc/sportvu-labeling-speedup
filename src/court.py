@@ -1,7 +1,8 @@
-"""Court zone definitions and coordinate normalization.
+"""Court landmark definitions and coordinate normalization.
 
-All zone classification uses coordinates normalized to a canonical half-court
-where the basket is at (5.25, 25) and the player faces the basket from mid-court.
+Position description uses named court landmarks (points and lines) rather than
+hard-edged zones.  Coordinates are normalized to a canonical half-court where
+the basket is at (5.25, 25) and the player faces the basket from mid-court.
 
 Left/Right convention: from the offensive player's perspective facing the basket.
   - Left  = y < 25 (near sideline when basket at x=5.25)
@@ -9,6 +10,7 @@ Left/Right convention: from the offensive player's perspective facing the basket
 """
 
 import math
+from dataclasses import dataclass, field
 from src.config import (
     COURT_LENGTH, COURT_WIDTH, LEFT_BASKET, RESTRICTED_AREA_RADIUS,
     PAINT_Y_MIN, PAINT_Y_MAX, PAINT_DEPTH,
@@ -38,7 +40,7 @@ def normalize_coords(x: float, y: float, attacking_right: bool) -> tuple[float, 
     If team is attacking the right basket (88.75, 25), mirror x.
     If team is attacking the left basket, mirror y so that left/right
     from the player's perspective (facing the basket) stays consistent
-    with classify_zone's convention (y < 25 = left, y > 25 = right).
+    with the convention (y < 25 = left, y > 25 = right).
     """
     if attacking_right:
         x = COURT_LENGTH - x
@@ -47,21 +49,186 @@ def normalize_coords(x: float, y: float, attacking_right: bool) -> tuple[float, 
     return x, y
 
 
-def classify_zone(x: float, y: float) -> dict:
-    """Classify a normalized (x, y) position into a basketball zone.
+# ---------------------------------------------------------------------------
+# Landmark definitions
+# ---------------------------------------------------------------------------
+
+LANDMARK_RADIUS = 1.5  # ft — proximity threshold for points and line tolerance
+
+
+@dataclass
+class LandmarkPoint:
+    name: str
+    x: float
+    y: float
+
+
+@dataclass
+class LandmarkLine:
+    name: str
+    kind: str  # "segment", "arc", or "composite"
+    # Segment: (x1,y1)→(x2,y2)
+    x1: float = 0.0
+    y1: float = 0.0
+    x2: float = 0.0
+    y2: float = 0.0
+    # Arc: center + radius + angle range (radians)
+    cx: float = 0.0
+    cy: float = 0.0
+    radius: float = 0.0
+    angle_start: float = 0.0
+    angle_end: float = 0.0
+    # Composite: list of sub-lines (populated after construction)
+    parts: list = field(default_factory=list)
+
+
+LANDMARK_POINTS: list[LandmarkPoint] = [
+    LandmarkPoint("basket", 5.25, 25),
+    LandmarkPoint("left block", 7, 20),
+    LandmarkPoint("right block", 7, 30),
+    LandmarkPoint("left elbow", 19, 17),
+    LandmarkPoint("right elbow", 19, 33),
+    LandmarkPoint("free throw line center", 19, 25),
+    LandmarkPoint("top of the key", 25, 25),
+    LandmarkPoint("left short corner", 8, 13),
+    LandmarkPoint("right short corner", 8, 37),
+    LandmarkPoint("left corner", 5, 3),
+    LandmarkPoint("right corner", 5, 47),
+    LandmarkPoint("left wing", 28, 8),
+    LandmarkPoint("right wing", 28, 42),
+    LandmarkPoint("left deep wing", 40, 8),
+    LandmarkPoint("right deep wing", 40, 42),
+    LandmarkPoint("top of the arc", 29, 25),
+    LandmarkPoint("the logo", 47, 25),
+]
+
+# Three-point arc angle range: the arc portion (excluding the straight corner segments).
+# Corner segments run at y=3 (left) and y=47 (right) from the baseline.
+# Arc center is at (5.25, 25), radius 23.75.
+# The arc meets the corner lines where y=3 and y=47:
+#   angle_left  = math.asin((25 - 3) / 23.75)   ≈ 1.176 rad
+#   angle_right = math.asin((47 - 25) / 23.75)   ≈ 1.176 rad
+# Angles measured from positive-x axis (0 = toward half-court).
+_THREE_ARC_ANGLE = math.acos((25 - 3) / THREE_POINT_ARC_RADIUS)  # half-angle from center
+
+_three_point_line = LandmarkLine("three-point line", "composite")
+_three_point_line.parts = [
+    # Left corner segment: baseline up from y=0 side, x goes from 0 to where arc starts
+    LandmarkLine("three-point line", "segment",
+                 x1=0, y1=3, x2=5.25 + THREE_POINT_ARC_RADIUS * math.cos(math.pi / 2 + _THREE_ARC_ANGLE), y2=3),
+    # Arc portion
+    LandmarkLine("three-point line", "arc",
+                 cx=5.25, cy=25, radius=THREE_POINT_ARC_RADIUS,
+                 angle_start=-math.pi / 2 + _THREE_ARC_ANGLE,
+                 angle_end=math.pi / 2 - _THREE_ARC_ANGLE),
+    # Right corner segment
+    LandmarkLine("three-point line", "segment",
+                 x1=0, y1=47, x2=5.25 + THREE_POINT_ARC_RADIUS * math.cos(math.pi / 2 + _THREE_ARC_ANGLE), y2=47),
+]
+
+LANDMARK_LINES: list[LandmarkLine] = [
+    LandmarkLine("baseline", "segment", x1=0, y1=0, x2=0, y2=50),
+    LandmarkLine("left sideline", "segment", x1=0, y1=0, x2=47, y2=0),
+    LandmarkLine("right sideline", "segment", x1=0, y1=50, x2=47, y2=50),
+    LandmarkLine("left lane line", "segment", x1=0, y1=17, x2=19, y2=17),
+    LandmarkLine("right lane line", "segment", x1=0, y1=33, x2=19, y2=33),
+    LandmarkLine("free throw line", "segment", x1=19, y1=17, x2=19, y2=33),
+    _three_point_line,
+    LandmarkLine("half-court line", "segment", x1=47, y1=0, x2=47, y2=50),
+    LandmarkLine("restricted area", "arc",
+                 cx=5.25, cy=25, radius=RESTRICTED_AREA_RADIUS,
+                 angle_start=-math.pi / 2, angle_end=math.pi / 2),
+]
+
+
+# ---------------------------------------------------------------------------
+# Distance helpers
+# ---------------------------------------------------------------------------
+
+def _distance_to_segment(px: float, py: float,
+                         x1: float, y1: float, x2: float, y2: float) -> float:
+    """Shortest distance from point (px, py) to segment (x1,y1)→(x2,y2)."""
+    dx, dy = x2 - x1, y2 - y1
+    length_sq = dx * dx + dy * dy
+    if length_sq == 0:
+        return math.sqrt((px - x1) ** 2 + (py - y1) ** 2)
+    t = max(0.0, min(1.0, ((px - x1) * dx + (py - y1) * dy) / length_sq))
+    proj_x = x1 + t * dx
+    proj_y = y1 + t * dy
+    return math.sqrt((px - proj_x) ** 2 + (py - proj_y) ** 2)
+
+
+def _distance_to_arc(px: float, py: float, cx: float, cy: float,
+                     radius: float, angle_start: float, angle_end: float) -> float:
+    """Shortest distance from point (px, py) to a circular arc.
+
+    The arc spans from angle_start to angle_end (radians, measured from
+    the positive-x axis going counter-clockwise around (cx, cy)).
+    """
+    # Angle from center to point
+    angle = math.atan2(py - cy, px - cx)
+
+    # Normalize angles into [0, 2pi)
+    def _norm(a):
+        return a % (2 * math.pi)
+
+    a_s = _norm(angle_start)
+    a_e = _norm(angle_end)
+    a_p = _norm(angle)
+
+    # Check if point's angle falls within arc range
+    if a_s <= a_e:
+        on_arc = a_s <= a_p <= a_e
+    else:
+        on_arc = a_p >= a_s or a_p <= a_e
+
+    if on_arc:
+        # Distance is simply |dist_to_center - radius|
+        dist_to_center = math.sqrt((px - cx) ** 2 + (py - cy) ** 2)
+        return abs(dist_to_center - radius)
+    else:
+        # Distance to nearest arc endpoint
+        ex1 = cx + radius * math.cos(angle_start)
+        ey1 = cy + radius * math.sin(angle_start)
+        ex2 = cx + radius * math.cos(angle_end)
+        ey2 = cy + radius * math.sin(angle_end)
+        d1 = math.sqrt((px - ex1) ** 2 + (py - ey1) ** 2)
+        d2 = math.sqrt((px - ex2) ** 2 + (py - ey2) ** 2)
+        return min(d1, d2)
+
+
+def _distance_to_line(px: float, py: float, line: LandmarkLine) -> float:
+    """Distance from a point to a landmark line (segment, arc, or composite)."""
+    if line.kind == "segment":
+        return _distance_to_segment(px, py, line.x1, line.y1, line.x2, line.y2)
+    elif line.kind == "arc":
+        return _distance_to_arc(px, py, line.cx, line.cy, line.radius,
+                                line.angle_start, line.angle_end)
+    elif line.kind == "composite":
+        return min(_distance_to_line(px, py, part) for part in line.parts)
+    return float("inf")
+
+
+# ---------------------------------------------------------------------------
+# Main position description
+# ---------------------------------------------------------------------------
+
+def describe_position(x: float, y: float) -> dict:
+    """Describe a normalized (x, y) position using the nearest court landmark.
 
     Coordinates must be normalized so the basket is at (5.25, 25).
 
     Returns dict with:
-      - zone: human-readable zone name
-      - side: 'left', 'right', or 'center'
+      - description: human-readable (e.g. "at the left elbow")
+      - landmark: landmark name
+      - relation: "at" | "on" | "near"
+      - distance: distance to the landmark (ft)
+      - side: "left" | "right" | "center"
       - distance_to_basket: float (feet)
-      - beyond_arc: bool
     """
-    dist = distance_to_basket(x, y)
-    beyond_arc = is_beyond_three_point_line(x, y)
+    dist_basket = distance_to_basket(x, y)
 
-    # Determine left/right/center
+    # Side
     if y < 22:
         side = "left"
     elif y > 28:
@@ -69,74 +236,63 @@ def classify_zone(x: float, y: float) -> dict:
     else:
         side = "center"
 
-    # Priority 1: The logo (center circle, radius 6ft around midcourt)
-    dist_to_center = math.sqrt((x - 47) ** 2 + (y - 25) ** 2)
-    if dist_to_center <= 6:
-        return {"zone": "the logo", "side": "center", "distance_to_basket": round(dist, 1), "beyond_arc": True}
+    # 1. Check landmark points (most specific)
+    best_point = None
+    best_point_dist = float("inf")
+    for lp in LANDMARK_POINTS:
+        d = math.sqrt((x - lp.x) ** 2 + (y - lp.y) ** 2)
+        if d < best_point_dist:
+            best_point_dist = d
+            best_point = lp
 
-    # Priority 2: Restricted area
-    if dist <= RESTRICTED_AREA_RADIUS:
-        return {"zone": "restricted area", "side": side, "distance_to_basket": round(dist, 1), "beyond_arc": False}
+    if best_point_dist <= LANDMARK_RADIUS:
+        return {
+            "description": f"at the {best_point.name}",
+            "landmark": best_point.name,
+            "relation": "at",
+            "distance": round(best_point_dist, 1),
+            "side": side,
+            "distance_to_basket": round(dist_basket, 1),
+        }
 
-    # Priority 3: Elbows (at the corners of the free-throw line, check before paint)
-    if 17 <= x <= 22:
-        if 14 <= y <= 19:
-            return {"zone": "left elbow", "side": "left", "distance_to_basket": round(dist, 1), "beyond_arc": False}
-        if 31 <= y <= 36:
-            return {"zone": "right elbow", "side": "right", "distance_to_basket": round(dist, 1), "beyond_arc": False}
+    # 2. Check landmark lines
+    best_line = None
+    best_line_dist = float("inf")
+    for ll in LANDMARK_LINES:
+        d = _distance_to_line(x, y, ll)
+        if d < best_line_dist:
+            best_line_dist = d
+            best_line = ll
 
-    # Priority 4: Paint — split into low post (near basket) and high post (near FT line)
-    if x <= PAINT_DEPTH and PAINT_Y_MIN <= y <= PAINT_Y_MAX:
-        if y < 25:
-            paint_side = "left"
-            zone = "left low post" if x <= 10 else "left high post"
-        elif y > 25:
-            paint_side = "right"
-            zone = "right low post" if x <= 10 else "right high post"
-        else:
-            paint_side = "center"
-            zone = "left high post" if x <= 10 else "right high post"
-        return {"zone": zone, "side": paint_side, "distance_to_basket": round(dist, 1), "beyond_arc": False}
+    if best_line_dist <= LANDMARK_RADIUS:
+        return {
+            "description": f"on the {best_line.name}",
+            "landmark": best_line.name,
+            "relation": "on",
+            "distance": round(best_line_dist, 1),
+            "side": side,
+            "distance_to_basket": round(dist_basket, 1),
+        }
 
-    # Priority 5: Short corner (baseline area outside paint, inside 3pt line)
-    if x <= 14 and not beyond_arc and not (PAINT_Y_MIN <= y <= PAINT_Y_MAX):
-        if y < 25:
-            return {"zone": "left short corner", "side": "left", "distance_to_basket": round(dist, 1), "beyond_arc": False}
-        else:
-            return {"zone": "right short corner", "side": "right", "distance_to_basket": round(dist, 1), "beyond_arc": False}
-
-    # Priority 6: Three-point zones
-    if beyond_arc:
-        # Corner threes
-        if y < 11 and x < 14:
-            return {"zone": "left corner", "side": "left", "distance_to_basket": round(dist, 1), "beyond_arc": True}
-        if y > 39 and x < 14:
-            return {"zone": "right corner", "side": "right", "distance_to_basket": round(dist, 1), "beyond_arc": True}
-
-        # Wing — split into near 3pt line vs near half court at x=35
-        if y < 22:
-            zone = "left wing" if x <= 35 else "left wing (deep)"
-            return {"zone": zone, "side": "left", "distance_to_basket": round(dist, 1), "beyond_arc": True}
-        if y > 28:
-            zone = "right wing" if x <= 35 else "right wing (deep)"
-            return {"zone": zone, "side": "right", "distance_to_basket": round(dist, 1), "beyond_arc": True}
-
-        # Top of the arc — split into near 3pt line vs near half court at x=35
-        zone = "top of the arc" if x <= 35 else "in front of the logo"
-        return {"zone": zone, "side": "center", "distance_to_basket": round(dist, 1), "beyond_arc": True}
-
-    # Priority 7: Mid-range
-    if y < 22:
-        zone = "left mid-range"
-        mr_side = "left"
-    elif y > 28:
-        zone = "right mid-range"
-        mr_side = "right"
+    # 3. Fallback: nearest landmark (point or line, whichever closer)
+    if best_point_dist <= best_line_dist:
+        return {
+            "description": f"near the {best_point.name}",
+            "landmark": best_point.name,
+            "relation": "near",
+            "distance": round(best_point_dist, 1),
+            "side": side,
+            "distance_to_basket": round(dist_basket, 1),
+        }
     else:
-        zone = "top of the key"
-        mr_side = "center"
-
-    return {"zone": zone, "side": mr_side, "distance_to_basket": round(dist, 1), "beyond_arc": False}
+        return {
+            "description": f"near the {best_line.name}",
+            "landmark": best_line.name,
+            "relation": "near",
+            "distance": round(best_line_dist, 1),
+            "side": side,
+            "distance_to_basket": round(dist_basket, 1),
+        }
 
 
 def detect_attacking_basket(game, period: int) -> dict[int, bool]:
@@ -232,32 +388,26 @@ def detect_attacking_basket(game, period: int) -> dict[int, bool]:
 
 
 if __name__ == "__main__":
-    # Quick smoke test with known coordinates
+    # Smoke test: exercise all three relation types
     test_points = [
-        (5.25, 25.0, "basket center → restricted area"),
-        (3.0, 25.0, "under basket → restricted area"),
-        (7.0, 20.0, "paint near basket → left low post"),
-        (7.0, 30.0, "paint near basket → right low post"),
-        (15.0, 20.0, "paint near FT line → left high post"),
-        (15.0, 30.0, "paint near FT line → right high post"),
-        (19.0, 17.0, "left elbow area"),
-        (19.0, 33.0, "right elbow area"),
-        (5.0, 3.0, "baseline outside paint → left short corner"),
-        (5.0, 47.0, "baseline outside paint → right short corner"),
-        (5.0, 8.0, "left corner three"),
-        (5.0, 42.0, "right corner three"),
-        (30.0, 10.0, "left wing"),
-        (30.0, 40.0, "right wing"),
-        (40.0, 10.0, "left wing (deep)"),
-        (40.0, 40.0, "right wing (deep)"),
-        (30.0, 25.0, "top of the arc"),
-        (15.0, 15.0, "left mid-range"),
-        (15.0, 35.0, "right mid-range"),
-        (25.0, 25.0, "top of the key"),
-        (30.0, 25.0, "top of the arc"),
-        (40.0, 25.0, "in front of the logo"),
-        (47.0, 25.0, "the logo"),
+        # "at" — on a landmark point
+        (5.25, 25.0, "should be 'at the basket'"),
+        (19.0, 17.0, "should be 'at the left elbow'"),
+        (19.0, 33.0, "should be 'at the right elbow'"),
+        (7.0, 20.0, "should be 'at the left block'"),
+        (5.0, 3.0, "should be 'at the left corner'"),
+        (47.0, 25.0, "should be 'at the the logo'"),
+        # "on" — on a landmark line
+        (0.0, 25.0, "should be 'on the baseline'"),
+        (10.0, 17.0, "should be 'on the left lane line'"),
+        (19.0, 25.0, "at FT line center (point takes priority)"),
+        # "near" — fallback
+        (15.0, 10.0, "should be 'near' something"),
+        (35.0, 25.0, "should be 'near' something"),
+        (12.0, 25.0, "should be 'near' something"),
     ]
     for x, y, desc in test_points:
-        result = classify_zone(x, y)
-        print(f"  ({x:5.1f}, {y:5.1f}) → {result['zone']:25s} [{result['side']:6s}] dist={result['distance_to_basket']:5.1f}ft  | {desc}")
+        result = describe_position(x, y)
+        print(f"  ({x:5.1f}, {y:5.1f}) → {result['description']:35s} "
+              f"[{result['relation']:4s}] dist={result['distance']:4.1f}ft  "
+              f"basket={result['distance_to_basket']:5.1f}ft  | {desc}")

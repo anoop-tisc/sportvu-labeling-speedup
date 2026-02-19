@@ -31,10 +31,11 @@ class TestGetPlayerPositions:
         assert "x" in result["ball"]
         assert "z" in result["ball"]
 
-    def test_players_have_zones(self, game):
+    def test_players_have_positions(self, game):
         result = get_player_positions(game, 1, 660.0)
         for p in result["players"]:
-            assert "zone" in p
+            assert "position" in p
+            assert "landmark" in p
             assert "distance_to_basket" in p
             assert "team" in p
             assert "name" in p

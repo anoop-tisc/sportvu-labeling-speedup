@@ -11,7 +11,7 @@ from src.config import (
     MATCHUP_LOOSE, FPS,
 )
 from src.sportvu_loader import GameData, Moment, find_moment, get_moments, resolve_player
-from src.court import classify_zone, normalize_coords, detect_attacking_basket, distance_to_basket
+from src.court import describe_position, normalize_coords, detect_attacking_basket, distance_to_basket
 from src.pbp import get_pbp_events
 
 
@@ -91,17 +91,17 @@ def get_player_positions(game: GameData, period: int, game_clock: float,
         team_id, player_id, x, y, z = entry[0], entry[1], entry[2], entry[3], entry[4]
         info = _resolve_player_info(game, team_id, player_id)
 
-        # Normalize for zone classification
+        # Normalize for position description
         attacking_right = attacking_basket.get(team_id, False)
         nx, ny = normalize_coords(x, y, attacking_right)
-        zone = classify_zone(nx, ny)
+        pos = describe_position(nx, ny)
 
         info.update({
             "x": round(x, 1),
             "y": round(y, 1),
-            "zone": zone["zone"],
-            "side": zone["side"],
-            "distance_to_basket": zone["distance_to_basket"],
+            "position": pos["description"],
+            "landmark": pos["landmark"],
+            "distance_to_basket": pos["distance_to_basket"],
         })
         result["players"].append(info)
 
@@ -292,7 +292,7 @@ def detect_passes(game: GameData, period: int, gc_start: float, gc_end: float,
                 if p and p.full_name == passer:
                     attacking_right = attacking_basket.get(entry[0], False)
                     nx, ny = normalize_coords(entry[2], entry[3], attacking_right)
-                    passer_pos = classify_zone(nx, ny)["zone"]
+                    passer_pos = describe_position(nx, ny)["description"]
                     passer_xy = (entry[2], entry[3])
                     break
 
@@ -302,7 +302,7 @@ def detect_passes(game: GameData, period: int, gc_start: float, gc_end: float,
                 if p and p.full_name == receiver:
                     attacking_right = attacking_basket.get(entry[0], False)
                     nx, ny = normalize_coords(entry[2], entry[3], attacking_right)
-                    receiver_pos = classify_zone(nx, ny)["zone"]
+                    receiver_pos = describe_position(nx, ny)["description"]
                     receiver_xy = (entry[2], entry[3])
                     break
 
@@ -316,8 +316,8 @@ def detect_passes(game: GameData, period: int, gc_start: float, gc_end: float,
             "receiver_team": receiver_team,
             "time_gc": round(seg_a["end_gc"], 2),
             "flight_time": round(gap_duration, 2),
-            "passer_zone": passer_pos,
-            "receiver_zone": receiver_pos,
+            "passer_position": passer_pos,
+            "receiver_position": receiver_pos,
             "distance_ft": pass_distance,
         }
 
@@ -511,23 +511,24 @@ def get_player_trajectory(game: GameData, player_name: str, period: int,
 
         if last_gc is None or (last_gc - pt["gc"]) >= sample_interval:
             nx, ny = normalize_coords(pt["x"], pt["y"], attacking_right)
-            zone = classify_zone(nx, ny)
+            pos = describe_position(nx, ny)
             sampled.append({
                 "game_clock": round(pt["gc"], 2),
                 "x": round(pt["x"], 1),
                 "y": round(pt["y"], 1),
-                "zone": zone["zone"],
+                "position": pos["description"],
+                "landmark": pos["landmark"],
                 "speed_ft_s": pt["speed_ft_s"],
             })
             last_gc = pt["gc"]
 
-    # Zone transitions
+    # Position transitions
     transitions = []
     for i in range(1, len(sampled)):
-        if sampled[i]["zone"] != sampled[i - 1]["zone"]:
+        if sampled[i]["position"] != sampled[i - 1]["position"]:
             transitions.append({
-                "from_zone": sampled[i - 1]["zone"],
-                "to_zone": sampled[i]["zone"],
+                "from_position": sampled[i - 1]["position"],
+                "to_position": sampled[i]["position"],
                 "game_clock": sampled[i]["game_clock"],
             })
 
@@ -542,7 +543,7 @@ def get_player_trajectory(game: GameData, player_name: str, period: int,
         "total_distance_ft": round(total_distance, 1),
         "avg_speed_ft_s": round(avg_speed, 1),
         "samples": sampled,
-        "zone_transitions": transitions,
+        "position_transitions": transitions,
     }
 
 
