@@ -10,6 +10,7 @@ matplotlib.use("Agg")
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.patches import Circle, Rectangle, Arc
+from mpl_toolkits.mplot3d import Axes3D
 from subprocess import Popen, PIPE
 from pathlib import Path
 
@@ -70,6 +71,101 @@ def draw_court(ax, color="white", lw=1.5, zorder=0):
     ]
     for el in elements:
         ax.add_patch(el)
+    return ax
+
+
+def _circle_pts(cx, cy, r, theta1=0, theta2=360, n=64):
+    """Generate (x, y) arrays for a circle/arc at z=0."""
+    t = np.linspace(np.radians(theta1), np.radians(theta2), n)
+    return cx + r * np.cos(t), cy + r * np.sin(t)
+
+
+def draw_court_3d(ax, color="black", lw=1.0):
+    """Draw full NBA court lines on a 3D axes at z=0, plus hoops at z=10."""
+    z0 = lambda n: np.zeros(n)
+    RIM_HEIGHT = 10.0
+    RIM_RADIUS = 0.75
+    BACKBOARD_WIDTH = 6.0
+
+    # --- Court boundary ---
+    for x0, y0, x1, y1 in [
+        (0, -50, 94, -50), (94, -50, 94, 0), (94, 0, 0, 0), (0, 0, 0, -50),
+    ]:
+        ax.plot([x0, x1], [y0, y1], [0, 0], color=color, lw=lw)
+
+    # --- Half court line ---
+    ax.plot([47, 47], [-50, 0], [0, 0], color=color, lw=lw)
+
+    # Half court circles
+    for r in [6, 2]:
+        cx, cy = _circle_pts(47, -25, r)
+        ax.plot(cx, cy, z0(len(cx)), color=color, lw=lw)
+
+    # --- Helper for mirrored elements (left at bx, right at 94-bx) ---
+    def _draw_side(bx, basket_x, sign):
+        # Paint outer
+        px = bx if sign == 1 else 94 - 19
+        for x0, y0, x1, y1 in [
+            (px, -33, px + 19, -33), (px + 19, -33, px + 19, -17),
+            (px + 19, -17, px, -17), (px, -17, px, -33),
+        ]:
+            ax.plot([x0, x1], [y0, y1], [0, 0], color=color, lw=lw)
+        # Paint inner
+        for x0, y0, x1, y1 in [
+            (px, -31, px + 19, -31), (px + 19, -31, px + 19, -19),
+            (px + 19, -19, px, -19), (px, -19, px, -31),
+        ]:
+            ax.plot([x0, x1], [y0, y1], [0, 0], color=color, lw=lw)
+        # FT circle
+        ft_x = 19 if sign == 1 else 75
+        cx, cy = _circle_pts(ft_x, -25, 6)
+        ax.plot(cx, cy, z0(len(cx)), color=color, lw=lw)
+
+        # Basket circle on floor
+        cx, cy = _circle_pts(basket_x, -25, RIM_RADIUS)
+        ax.plot(cx, cy, z0(len(cx)), color=color, lw=lw * 0.5, alpha=0.3)
+
+        # Backboard on floor
+        bb_x = 4 if sign == 1 else 90
+        ax.plot([bb_x, bb_x], [-28, -22], [0, 0], color=color, lw=lw)
+
+        # 3-pt corner lines
+        corner_x = 14 if sign == 1 else 80
+        base_x = 0 if sign == 1 else 94
+        ax.plot([base_x, corner_x], [-3, -3], [0, 0], color=color, lw=lw)
+        ax.plot([base_x, corner_x], [-47, -47], [0, 0], color=color, lw=lw)
+
+        # 3-pt arc
+        arc_cx = 5 if sign == 1 else 89
+        t1, t2 = (292, 428) if sign == 1 else (112, 248)
+        cx, cy = _circle_pts(arc_cx, -25, 23.75, t1, t2, n=80)
+        ax.plot(cx, cy, z0(len(cx)), color=color, lw=lw)
+
+        # === 3D Hoop at rim height ===
+        # Rim ring
+        cx, cy = _circle_pts(basket_x, -25, RIM_RADIUS, n=32)
+        ax.plot(cx, cy, np.full(len(cx), RIM_HEIGHT), color='#ff6600', lw=1.5)
+
+        # Backboard (vertical rectangle)
+        bb_hw = BACKBOARD_WIDTH / 2
+        bb_h = 3.5  # backboard height in feet
+        bb_bottom = RIM_HEIGHT - 0.5
+        ax.plot([bb_x, bb_x], [-25 - bb_hw, -25 + bb_hw],
+                [bb_bottom, bb_bottom], color='#aaa', lw=1.5)
+        ax.plot([bb_x, bb_x], [-25 - bb_hw, -25 + bb_hw],
+                [bb_bottom + bb_h, bb_bottom + bb_h], color='#aaa', lw=1.5)
+        ax.plot([bb_x, bb_x], [-25 - bb_hw, -25 - bb_hw],
+                [bb_bottom, bb_bottom + bb_h], color='#aaa', lw=1.5)
+        ax.plot([bb_x, bb_x], [-25 + bb_hw, -25 + bb_hw],
+                [bb_bottom, bb_bottom + bb_h], color='#aaa', lw=1.5)
+
+        # Vertical post from rim to backboard (connector)
+        ax.plot([basket_x, bb_x], [-25, -25],
+                [RIM_HEIGHT, RIM_HEIGHT], color='#aaa', lw=1.0)
+
+    _draw_side(0, 5.35, 1)      # left
+    _draw_side(75, 88.65, -1)    # right
+
     return ax
 
 

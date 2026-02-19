@@ -25,8 +25,8 @@ from google import genai
 from src.sportvu_loader import load_game, find_moment
 from src.pbp import fetch_pbp
 from src.visualize import (
-    draw_court, _extract_frame_data, _clock_strings, get_commentary,
-    _build_handler_lookup, WIDTH, HEIGHT, DPI, FIG_W, FIG_H,
+    draw_court, draw_court_3d, _extract_frame_data, _clock_strings,
+    get_commentary, _build_handler_lookup, WIDTH, HEIGHT, DPI, FIG_W, FIG_H,
 )
 
 # Output layout
@@ -265,6 +265,76 @@ def load_alignment(path: str) -> tuple[float, float, float]:
 # Stacked video rendering
 # ---------------------------------------------------------------------------
 
+def _extract_3d_frame_data(moment, game, team_colors, highlight_player_id=None):
+    """Extract 3D scatter data from a Moment. Separates ball (with z) from players (z=0)."""
+    home_id = game.home_team["teamid"]
+    # Players
+    px, py, pz, pcolors, psizes, pedges = [], [], [], [], [], []
+    jerseys = []
+    # Ball
+    bx, by, bz, bcolor, bsize = None, None, None, None, None
+
+    for entry in moment.players:
+        tid, pid, x, y = entry[0], entry[1], entry[2], entry[3]
+        z = entry[4] if len(entry) > 4 else 0.0
+        y_adj = -y  # Court drawn y=-50 to y=0
+
+        if tid == -1:  # Ball
+            bx, by, bz = x, y_adj, z
+            bcolor = team_colors.get(tid, "gray")
+            bsize = max(150 - 2 * (z - 5) ** 2, 10)
+        else:
+            px.append(x)
+            py.append(y_adj)
+            pz.append(0.0)
+            pcolors.append(team_colors.get(tid, "gray"))
+            psizes.append(200)
+            if highlight_player_id is not None and pid == highlight_player_id:
+                pedges.append(4)
+            else:
+                pedges.append(0.5)
+            player = game.roster.get(pid)
+            if player:
+                jerseys.append((x, y_adj, 0.0, player.jersey))
+
+    return (px, py, pz, pcolors, psizes, pedges, jerseys,
+            bx, by, bz, bcolor, bsize)
+
+
+def _setup_3d_ax(ax):
+    """Configure a 3D axes for court visualization."""
+    ax.set_xlim(-2, 96)
+    ax.set_ylim(-52, 2)
+    ax.set_zlim(0, 18)
+    ax.set_xticks([])
+    ax.set_yticks([])
+    ax.set_zticks([0, 5, 10, 15])
+    ax.set_zticklabels(['0', '5', '10', '15'], fontsize=6, color='#666')
+    ax.set_zlabel('ft', fontsize=7, color='#666')
+    ax.view_init(elev=30, azim=-55)
+    ax.set_box_aspect([94, 50, 18])
+    ax.dist = 5.5  # zoom in (default is ~10)
+    # Lighten the pane backgrounds
+    ax.xaxis.pane.fill = False
+    ax.yaxis.pane.fill = False
+    ax.zaxis.pane.set_facecolor('#e8e8e8')
+    ax.zaxis.pane.set_alpha(0.3)
+    ax.grid(False)
+
+
+def _draw_flat_circle(ax, cx, cy, r, color, edgecolor='black', edgewidth=0.5, alpha=0.9, n=16):
+    """Draw a filled circle flat on the z=0 plane using Poly3DCollection."""
+    from mpl_toolkits.mplot3d.art3d import Poly3DCollection
+    theta = np.linspace(0, 2 * np.pi, n)
+    x = cx + r * np.cos(theta)
+    y = cy + r * np.sin(theta)
+    z = np.zeros(n)
+    verts = [list(zip(x, y, z))]
+    poly = Poly3DCollection(verts, facecolors=[color], edgecolors=[edgecolor],
+                            linewidths=[edgewidth], alpha=alpha)
+    ax.add_collection3d(poly)
+
+
 def render_synced_video(
     video_path: str,
     game,
@@ -275,6 +345,7 @@ def render_synced_video(
     output_path: str,
     commentary: bool = True,
     show_handler: bool = True,
+    use_3d: bool = False,
 ):
     """Render stacked video: broadcast on top, court viz on bottom."""
     video_fps = _probe_fps(video_path)
@@ -288,6 +359,8 @@ def render_synced_video(
 
     n_out = int(duration * OUT_FPS)
     print(f"Output: {n_out} frames at {OUT_FPS} FPS, {OUT_WIDTH}x{OUT_HEIGHT}")
+    if use_3d:
+        print("  3D rendering enabled")
 
     # Determine game clock range for handler detection
     gc_start = slope * 0 + intercept
@@ -312,14 +385,18 @@ def render_synced_video(
     fig = plt.figure(figsize=(FIG_W, FIG_H), dpi=DPI)
     fig.patch.set_facecolor("white")
 
-    ax = fig.add_axes([0.02, 0.25, 0.96, 0.65])
+    if use_3d:
+        ax = fig.add_subplot(111, projection='3d')
+        fig.subplots_adjust(left=-0.1, right=1.1, top=0.85, bottom=0.05)
+    else:
+        ax = fig.add_axes([0.02, 0.25, 0.96, 0.65])
 
     score_text = fig.text(0.5, 0.94, "", ha="center", va="center",
                           color="black", fontsize=16, fontweight="bold")
     clock_text = fig.text(0.5, 0.91, "", ha="center", va="center",
                           color="black", fontsize=13)
-    commentary_text = fig.text(0.5, 0.20, "", ha="center", va="top",
-                               color="black", fontsize=10,
+    commentary_text = fig.text(0.5, 0.08, "" if use_3d else "", ha="center",
+                               va="top", color="black", fontsize=10,
                                linespacing=1.4, fontstyle="italic")
 
     # ffmpeg output pipe — takes raw RGBA, produces H.264
@@ -365,49 +442,102 @@ def render_synced_video(
         game_clock = slope * t + intercept
         moment = find_moment(game, period, game_clock)
 
-        ax.clear()
-        ax.set_facecolor("#e8e8e8")
-        draw_court(ax, color="black")
-        ax.set_xlim(-5, 100)
-        ax.set_ylim(-55, 5)
-        ax.set_aspect("equal")
-        ax.set_xticks([])
-        ax.set_yticks([])
-        for spine in ax.spines.values():
-            spine.set_visible(False)
+        if use_3d:
+            # 3D rendering path
+            ax.clear()
+            ax.set_facecolor('white')
+            draw_court_3d(ax, color="#555", lw=0.8)
+            _setup_3d_ax(ax)
 
-        if moment:
-            frame_highlight = None
-            if handler_lookup is not None:
-                frame_highlight = handler_lookup(moment.game_clock)
+            if moment:
+                frame_highlight = None
+                if handler_lookup is not None:
+                    frame_highlight = handler_lookup(moment.game_clock)
 
-            x_pos, y_pos, colors, sizes, edges, jerseys = _extract_frame_data(
-                moment, game, team_colors, frame_highlight)
-            shot_clock_str, game_clock_str, quarter_str = _clock_strings(moment)
-            commentary_script, score_str = get_commentary(
-                pbp_events, moment.period, moment.game_clock)
+                (px, py, pz, pcolors, psizes, pedges, jerseys,
+                 bx, by, bz, bcolor, bsize) = _extract_3d_frame_data(
+                    moment, game, team_colors, frame_highlight)
+                shot_clock_str, game_clock_str, quarter_str = _clock_strings(moment)
+                commentary_script, score_str = get_commentary(
+                    pbp_events, moment.period, moment.game_clock)
 
-            ax.scatter(x_pos, y_pos, c=colors, s=sizes, alpha=0.9,
-                       linewidths=edges, edgecolors="black", zorder=5)
-            for jx, jy, jersey in jerseys:
-                ax.text(jx, jy, jersey, color="white", fontsize=6,
-                        ha="center", va="center", fontweight="bold", zorder=6)
-            ax.scatter([30], [2.5], s=80, c=[team_colors[away_id]],
-                       edgecolors="black", linewidths=0.5, zorder=5)
-            ax.scatter([67], [2.5], s=80, c=[team_colors[home_id]],
-                       edgecolors="black", linewidths=0.5, zorder=5)
+                # Players as flat circles on the floor
+                for j in range(len(px)):
+                    ew = pedges[j] if j < len(pedges) else 0.5
+                    _draw_flat_circle(ax, px[j], py[j], r=1.5,
+                                      color=pcolors[j], edgewidth=ew)
+                for jx, jy, jz, jersey in jerseys:
+                    ax.text(jx, jy, 0.1, jersey, color="white", fontsize=5,
+                            ha="center", va="center", fontweight="bold")
 
-            score_text.set_text(f"{away_abbr}   {score_str}   {home_abbr}")
-            clock_text.set_text(
-                f"{quarter_str}   {game_clock_str}      Shot: {shot_clock_str}")
-            if commentary:
-                commentary_text.set_text(commentary_script)
+                # Ball in 3D with shadow
+                if bx is not None:
+                    ax.scatter([bx], [by], [bz], c=[bcolor], s=[bsize],
+                               alpha=0.95, edgecolors="black", linewidths=0.5,
+                               depthshade=False)
+                    # Shadow line from ball down to floor
+                    ax.plot([bx, bx], [by, by], [0, bz],
+                            color='#ff8c00', alpha=0.4, lw=1, linestyle='--')
+                    # Shadow dot on floor
+                    ax.scatter([bx], [by], [0], c=['#ff8c00'], s=[40],
+                               alpha=0.3, edgecolors='none')
+
+                score_text.set_text(f"{away_abbr}   {score_str}   {home_abbr}")
+                clock_text.set_text(
+                    f"{quarter_str}   {game_clock_str}      Shot: {shot_clock_str}")
+                if commentary:
+                    commentary_text.set_text(commentary_script)
+                else:
+                    commentary_text.set_text("")
             else:
+                score_text.set_text("")
+                clock_text.set_text("")
                 commentary_text.set_text("")
         else:
-            score_text.set_text("")
-            clock_text.set_text("")
-            commentary_text.set_text("")
+            # 2D rendering path (original)
+            ax.clear()
+            ax.set_facecolor("#e8e8e8")
+            draw_court(ax, color="black")
+            ax.set_xlim(-5, 100)
+            ax.set_ylim(-55, 5)
+            ax.set_aspect("equal")
+            ax.set_xticks([])
+            ax.set_yticks([])
+            for spine in ax.spines.values():
+                spine.set_visible(False)
+
+            if moment:
+                frame_highlight = None
+                if handler_lookup is not None:
+                    frame_highlight = handler_lookup(moment.game_clock)
+
+                x_pos, y_pos, colors, sizes, edges, jerseys = _extract_frame_data(
+                    moment, game, team_colors, frame_highlight)
+                shot_clock_str, game_clock_str, quarter_str = _clock_strings(moment)
+                commentary_script, score_str = get_commentary(
+                    pbp_events, moment.period, moment.game_clock)
+
+                ax.scatter(x_pos, y_pos, c=colors, s=sizes, alpha=0.9,
+                           linewidths=edges, edgecolors="black", zorder=5)
+                for jx, jy, jersey in jerseys:
+                    ax.text(jx, jy, jersey, color="white", fontsize=6,
+                            ha="center", va="center", fontweight="bold", zorder=6)
+                ax.scatter([30], [2.5], s=80, c=[team_colors[away_id]],
+                           edgecolors="black", linewidths=0.5, zorder=5)
+                ax.scatter([67], [2.5], s=80, c=[team_colors[home_id]],
+                           edgecolors="black", linewidths=0.5, zorder=5)
+
+                score_text.set_text(f"{away_abbr}   {score_str}   {home_abbr}")
+                clock_text.set_text(
+                    f"{quarter_str}   {game_clock_str}      Shot: {shot_clock_str}")
+                if commentary:
+                    commentary_text.set_text(commentary_script)
+                else:
+                    commentary_text.set_text("")
+            else:
+                score_text.set_text("")
+                clock_text.set_text("")
+                commentary_text.set_text("")
 
         fig.canvas.draw()
         court_rgba = np.asarray(fig.canvas.buffer_rgba()).copy()  # (720, 1280, 4)
@@ -459,6 +589,8 @@ def main():
                         help="Disable ball handler detection")
     parser.add_argument("--no-commentary", action="store_true",
                         help="Disable PBP commentary overlay")
+    parser.add_argument("--3d", dest="use_3d", action="store_true",
+                        help="Render court visualization in 3D (shows ball height)")
     args = parser.parse_args()
 
     # Load alignment from cache, or run OCR
@@ -499,6 +631,7 @@ def main():
         output_path=args.output,
         commentary=not args.no_commentary,
         show_handler=not args.no_handler,
+        use_3d=args.use_3d,
     )
 
 
