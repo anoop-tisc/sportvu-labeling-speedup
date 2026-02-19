@@ -1,0 +1,341 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Video Alignment Tool</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: monospace; background: #1a1a1a; color: #eee; padding: 20px; }
+  h1 { text-align: center; margin-bottom: 20px; font-size: 18px; }
+  .container { display: flex; gap: 20px; justify-content: center; }
+  .panel { flex: 1; max-width: 640px; }
+  .panel h2 { text-align: center; margin-bottom: 8px; font-size: 14px; color: #aaa; }
+  video { width: 100%; background: #000; display: block; }
+  .controls { display: flex; gap: 8px; margin-top: 8px; justify-content: center; align-items: center; }
+  button {
+    background: #333; color: #eee; border: 1px solid #555; padding: 6px 14px;
+    cursor: pointer; font-family: monospace; font-size: 13px; border-radius: 3px;
+  }
+  button:hover { background: #444; }
+  button.mark { background: #2a5a2a; border-color: #4a8a4a; }
+  button.mark:hover { background: #3a6a3a; }
+  button.mark.marked { background: #5a2a2a; border-color: #8a4a4a; }
+  button.finalize { background: #2a4a6a; border-color: #4a7aaa; font-size: 14px; padding: 8px 20px; }
+  button.finalize:hover { background: #3a5a7a; }
+  button.finalize:disabled { opacity: 0.4; cursor: default; }
+  .info { text-align: center; margin-top: 6px; font-size: 13px; color: #aaa; }
+  .info .frame-num { color: #fff; font-weight: bold; }
+  .result {
+    text-align: center; margin-top: 24px; padding: 16px;
+    background: #222; border: 1px solid #444; border-radius: 4px;
+    font-size: 14px; max-width: 700px; margin-left: auto; margin-right: auto;
+  }
+  .result .offset { color: #6f6; font-size: 18px; font-weight: bold; }
+  .instructions {
+    text-align: center; margin-bottom: 16px; font-size: 13px; color: #888;
+    line-height: 1.6;
+  }
+  kbd {
+    background: #333; border: 1px solid #555; padding: 1px 5px;
+    border-radius: 3px; font-size: 12px;
+  }
+  #verify-section { display: none; margin-top: 40px; border-top: 1px solid #444; padding-top: 30px; }
+  #verify-section h1 { margin-bottom: 12px; }
+  #verify-section .controls { margin-top: 12px; margin-bottom: 8px; }
+</style>
+</head>
+<body>
+
+<h1>Manual Video Alignment Tool</h1>
+<div class="instructions">
+  Step through each video independently. Find a moment that looks the same in both.<br>
+  Mark that frame in each video, then click <b>Finalize Alignment</b> to verify.<br>
+  <kbd>A</kbd>/<kbd>D</kbd> = step broadcast &nbsp;&nbsp; <kbd>Left</kbd>/<kbd>Right</kbd> = step court viz &nbsp;&nbsp;
+  <kbd>Q</kbd> = mark broadcast &nbsp;&nbsp; <kbd>E</kbd> = mark court viz
+</div>
+
+<div class="container">
+  <div class="panel">
+    <h2>Broadcast (60 FPS)</h2>
+    <video id="vid-broadcast" src="0021500492_event64.mp4" preload="auto"></video>
+    <div class="controls">
+      <button onclick="step('broadcast', -1)">-1</button>
+      <button onclick="step('broadcast', -5)">-5</button>
+      <button onclick="step('broadcast', 5)">+5</button>
+      <button onclick="step('broadcast', 1)">+1</button>
+      <button class="mark" id="mark-broadcast" onclick="mark('broadcast')">Mark Frame</button>
+    </div>
+    <div class="info">
+      Frame: <span class="frame-num" id="frame-broadcast">0</span>
+      / <span id="total-broadcast">?</span>
+      &nbsp; Time: <span id="time-broadcast">0.000</span>s
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2>Court Viz (25 FPS, gc 291&rarr;282)</h2>
+    <video id="vid-court" src="court_viz_event64.mp4" preload="auto"></video>
+    <div class="controls">
+      <button onclick="step('court', -1)">-1</button>
+      <button onclick="step('court', -5)">-5</button>
+      <button onclick="step('court', 5)">+5</button>
+      <button onclick="step('court', 1)">+1</button>
+      <button class="mark" id="mark-court" onclick="mark('court')">Mark Frame</button>
+    </div>
+    <div class="info">
+      Frame: <span class="frame-num" id="frame-court">0</span>
+      / <span id="total-court">?</span>
+      &nbsp; Time: <span id="time-court">0.000</span>s
+      &nbsp; Game Clock: <span id="gc-court">291.00</span>s
+    </div>
+  </div>
+</div>
+
+<div class="result" id="result">
+  Mark a frame in each video to compute alignment.
+</div>
+
+<div style="text-align:center; margin-top: 16px;">
+  <button class="finalize" id="btn-finalize" onclick="finalizeAlignment()" disabled>Finalize Alignment</button>
+</div>
+
+<!-- Verification section -->
+<div id="verify-section">
+  <h1>Verify Alignment</h1>
+  <div class="instructions">
+    Both videos are synced at 25 FPS using your alignment. Step through together to verify.<br>
+    <kbd>Left</kbd>/<kbd>Right</kbd> = step &plusmn;1 frame &nbsp;&nbsp;
+    <kbd>Down</kbd>/<kbd>Up</kbd> = step &plusmn;5 frames
+  </div>
+  <div class="controls">
+    <button onclick="globalStep(-5)">-5</button>
+    <button onclick="globalStep(-1)">-1</button>
+    <button onclick="globalStep(1)">+1</button>
+    <button onclick="globalStep(5)">+5</button>
+  </div>
+  <div class="info" style="margin-bottom: 12px;">
+    Frame: <span class="frame-num" id="verify-frame">0</span>
+    / <span id="verify-total">?</span>
+    &nbsp; Game Clock: <span id="verify-gc">?</span>s
+  </div>
+  <div class="container">
+    <div class="panel">
+      <h2>Broadcast (resampled to 25 FPS)</h2>
+      <video id="verify-broadcast" src="0021500492_event64.mp4" preload="auto"></video>
+      <div class="info">
+        Source frame: <span id="verify-bc-frame">0</span>
+        &nbsp; Time: <span id="verify-bc-time">0.000</span>s
+      </div>
+    </div>
+    <div class="panel">
+      <h2>Court Viz (25 FPS)</h2>
+      <video id="verify-court" src="court_viz_event64.mp4" preload="auto"></video>
+      <div class="info">
+        Source frame: <span id="verify-ct-frame">0</span>
+        &nbsp; Time: <span id="verify-ct-time">0.000</span>s
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const COURT_GC_START = 291;
+const COURT_FPS = 25;
+const BROADCAST_FPS = 60;
+
+const config = {
+  broadcast: { fps: BROADCAST_FPS, el: null, frame: 0, markedFrame: null },
+  court:     { fps: COURT_FPS, el: null, frame: 0, markedFrame: null },
+};
+
+let finalIntercept = null;
+let verifyFrame = 0;
+let verifyTotalFrames = 0;
+
+function seekToFrame(vid, frame, fps) {
+  const t = (frame + 0.5) / fps;
+  vid.currentTime = Math.max(0, t);
+}
+
+function init() {
+  config.broadcast.el = document.getElementById('vid-broadcast');
+  config.court.el = document.getElementById('vid-court');
+
+  for (const key of ['broadcast', 'court']) {
+    const v = config[key].el;
+    v.addEventListener('loadedmetadata', () => {
+      v.pause();
+      const total = Math.round(v.duration * config[key].fps);
+      document.getElementById(`total-${key}`).textContent = total;
+      seekToFrame(v, 0, config[key].fps);
+    });
+  }
+  updateDisplay();
+}
+
+function step(which, delta) {
+  const c = config[which];
+  const total = Math.round(c.el.duration * c.fps);
+  c.frame = Math.max(0, Math.min(total - 1, c.frame + delta));
+  seekToFrame(c.el, c.frame, c.fps);
+  updateDisplay();
+}
+
+function mark(which) {
+  const c = config[which];
+  c.markedFrame = c.frame;
+  const btn = document.getElementById(`mark-${which}`);
+  btn.classList.add('marked');
+  btn.textContent = `Marked: ${c.frame}`;
+  computeAlignment();
+}
+
+function updateDisplay() {
+  for (const key of ['broadcast', 'court']) {
+    const c = config[key];
+    const t = c.frame / c.fps;
+    document.getElementById(`frame-${key}`).textContent = c.frame;
+    document.getElementById(`time-${key}`).textContent = t.toFixed(3);
+  }
+  const cc = config.court;
+  const gc = COURT_GC_START - (cc.frame / cc.fps);
+  document.getElementById('gc-court').textContent = gc.toFixed(2);
+}
+
+function computeAlignment() {
+  const bc = config.broadcast;
+  const ct = config.court;
+  if (bc.markedFrame === null || ct.markedFrame === null) return;
+
+  const bcTime = bc.markedFrame / bc.fps;
+  const ctGC = COURT_GC_START - (ct.markedFrame / ct.fps);
+
+  const intercept = ctGC + bcTime;
+
+  const el = document.getElementById('result');
+  el.innerHTML = `
+    <div>Broadcast frame <b>${bc.markedFrame}</b> (t=${bcTime.toFixed(3)}s)
+    = Court frame <b>${ct.markedFrame}</b> (gc=${ctGC.toFixed(2)}s)</div>
+    <div style="margin-top:8px">
+      Alignment: <span class="offset">game_clock = -1.0 * video_time + ${intercept.toFixed(3)}</span>
+    </div>
+    <div style="margin-top:8px; color:#aaa">
+      (Previous OCR-based intercept: 290.667)
+    </div>
+  `;
+
+  document.getElementById('btn-finalize').disabled = false;
+}
+
+function finalizeAlignment() {
+  const bc = config.broadcast;
+  const ct = config.court;
+  if (bc.markedFrame === null || ct.markedFrame === null) return;
+
+  const bcTime = bc.markedFrame / bc.fps;
+  const ctGC = COURT_GC_START - (ct.markedFrame / ct.fps);
+  finalIntercept = ctGC + bcTime;
+
+  // Compute how many 25 FPS frames we can show (limited by both videos)
+  const bcVid = document.getElementById('verify-broadcast');
+  const ctVid = document.getElementById('verify-court');
+
+  // Wait for both verify videos to be ready
+  let ready = 0;
+  const onReady = () => {
+    ready++;
+    if (ready < 2) return;
+
+    const bcDuration = bcVid.duration;
+    const ctDuration = ctVid.duration;
+
+    // For each court viz frame i, game_clock = COURT_GC_START - i/25
+    // Corresponding broadcast time = finalIntercept - game_clock = finalIntercept - COURT_GC_START + i/25
+    // We need broadcast_time >= 0 and broadcast_time <= bcDuration
+    // i/25 >= COURT_GC_START - finalIntercept  =>  i >= 25*(COURT_GC_START - finalIntercept)
+    // i/25 <= bcDuration + COURT_GC_START - finalIntercept  =>  i <= 25*(bcDuration + COURT_GC_START - finalIntercept)
+
+    const ctTotalFrames = Math.round(ctDuration * COURT_FPS);
+    const minI = Math.max(0, Math.ceil(COURT_FPS * (COURT_GC_START - finalIntercept)));
+    const maxI = Math.min(ctTotalFrames - 1,
+      Math.floor(COURT_FPS * (bcDuration + COURT_GC_START - finalIntercept)));
+
+    verifyTotalFrames = maxI - minI + 1;
+    verifyFrame = 0;
+
+    // Store the offset so frame 0 in verify maps to court frame minI
+    window._verifyMinI = minI;
+
+    document.getElementById('verify-total').textContent = verifyTotalFrames;
+    document.getElementById('verify-section').style.display = 'block';
+
+    bcVid.pause();
+    ctVid.pause();
+
+    globalStep(0);
+
+    // Scroll to verify section
+    document.getElementById('verify-section').scrollIntoView({ behavior: 'smooth' });
+  };
+
+  if (bcVid.readyState >= 1 && ctVid.readyState >= 1) {
+    ready = 0;
+    onReady(); onReady();
+  } else {
+    bcVid.addEventListener('loadedmetadata', onReady, { once: true });
+    ctVid.addEventListener('loadedmetadata', onReady, { once: true });
+    if (bcVid.readyState >= 1) onReady();
+    if (ctVid.readyState >= 1) onReady();
+  }
+}
+
+function globalStep(delta) {
+  verifyFrame = Math.max(0, Math.min(verifyTotalFrames - 1, verifyFrame + delta));
+
+  const courtFrame = window._verifyMinI + verifyFrame;
+  const gc = COURT_GC_START - courtFrame / COURT_FPS;
+
+  // broadcast_time = finalIntercept - gc
+  const bcTime = finalIntercept - gc;
+  const bcFrame = Math.round(bcTime * BROADCAST_FPS);
+
+  const bcVid = document.getElementById('verify-broadcast');
+  const ctVid = document.getElementById('verify-court');
+
+  seekToFrame(bcVid, bcFrame, BROADCAST_FPS);
+  seekToFrame(ctVid, courtFrame, COURT_FPS);
+
+  document.getElementById('verify-frame').textContent = verifyFrame;
+  document.getElementById('verify-gc').textContent = gc.toFixed(2);
+  document.getElementById('verify-bc-frame').textContent = bcFrame;
+  document.getElementById('verify-bc-time').textContent = bcTime.toFixed(3);
+  document.getElementById('verify-ct-frame').textContent = courtFrame;
+  document.getElementById('verify-ct-time').textContent = (courtFrame / COURT_FPS).toFixed(3);
+}
+
+document.addEventListener('keydown', (e) => {
+  // If verify section is visible, arrow keys control global stepping
+  if (finalIntercept !== null) {
+    switch(e.key) {
+      case 'ArrowLeft':  globalStep(-1); e.preventDefault(); return;
+      case 'ArrowRight': globalStep(1); e.preventDefault(); return;
+      case 'ArrowDown':  globalStep(-5); e.preventDefault(); return;
+      case 'ArrowUp':    globalStep(5); e.preventDefault(); return;
+    }
+  }
+
+  switch(e.key) {
+    case 'a': case 'A': step('broadcast', -1); e.preventDefault(); break;
+    case 'd': case 'D': step('broadcast', 1); e.preventDefault(); break;
+    case 'q': case 'Q': mark('broadcast'); break;
+    case 'ArrowLeft':  step('court', -1); e.preventDefault(); break;
+    case 'ArrowRight': step('court', 1); e.preventDefault(); break;
+    case 'e': case 'E': mark('court'); break;
+  }
+});
+
+window.addEventListener('load', init);
+</script>
+
+</body>
+</html>
