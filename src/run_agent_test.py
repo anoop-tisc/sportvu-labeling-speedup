@@ -10,13 +10,14 @@ from src.sportvu_loader import load_game, print_game_info
 from src.pbp import fetch_pbp
 from src.possession import identify_possessions, Possession
 from src.agent import run_agent
+from src.sync_video import load_alignment, _probe_fps, _probe_frame_count
 
 GAME_PATH = "data/0021500492.json"
 GAME_ID = "0021500492"
 PERIOD = 1
-GC_START = 710.0
-GC_END = 697.0
 TEAM = "TOR"
+VIDEO_PATH = "data/clip_q4.mp4"
+ALIGNMENT_PATH = "outputs/alignment.json"
 
 QUESTIONS = [
     "At the start of this clip, who has the ball and where are all 10 players positioned?",
@@ -28,6 +29,14 @@ OUTPUT_PATH = "outputs/agent_test_output_v4.md"
 
 
 def main():
+    # Derive time range from alignment + video duration
+    slope, intercept, video_fps = load_alignment(ALIGNMENT_PATH)
+    n_frames = _probe_frame_count(VIDEO_PATH)
+    duration = n_frames / video_fps
+    gc_start = intercept                       # video_time=0 → gc
+    gc_end = slope * duration + intercept      # video_time=duration → gc
+    print(f"Clip time range: gc {gc_start:.2f} → {gc_end:.2f} (duration {duration:.2f}s)")
+
     print(f"Loading game data from {GAME_PATH}...")
     game = load_game(GAME_PATH)
     print_game_info(game)
@@ -43,21 +52,21 @@ def main():
         team_id="custom",
         team_abbr=TEAM,
         period=PERIOD,
-        start_gc=GC_START,
-        end_gc=GC_END,
+        start_gc=gc_start,
+        end_gc=gc_end,
     )
 
-    gc_start_mm = int(GC_START) // 60
-    gc_start_ss = GC_START - gc_start_mm * 60
-    gc_end_mm = int(GC_END) // 60
-    gc_end_ss = GC_END - gc_end_mm * 60
+    import math
+    def _broadcast_clock(gc):
+        gc_ceil = math.ceil(gc)
+        return f"{gc_ceil // 60}:{gc_ceil % 60:02d}"
 
     lines = []
-    lines.append(f"# Agent Test Output v4 — Q1 {gc_start_mm}:{gc_start_ss:04.1f} to {gc_end_mm}:{gc_end_ss:04.1f}")
+    lines.append(f"# Agent Test Output v4 — Q1 {_broadcast_clock(gc_start)} to {_broadcast_clock(gc_end)}")
     lines.append("")
     lines.append(f"**Game:** {GAME_ID} — CHA @ TOR, 2016-01-01")
-    lines.append(f"**Segment:** Period {PERIOD}, game clock {GC_START}s ({gc_start_mm}:{gc_start_ss:04.1f}) to {GC_END}s ({gc_end_mm}:{gc_end_ss:04.1f})")
-    lines.append("**Changes since v3:** Switched to clip2 time range (Q1 11:50-11:37) with SAM 3 auto-alignment for broadcast-to-tracking sync.")
+    lines.append(f"**Segment:** Period {PERIOD}, game clock {_broadcast_clock(gc_start)} to {_broadcast_clock(gc_end)}")
+    lines.append("**Changes since v3:** Time range derived from alignment + video duration for accurate broadcast-to-tracking sync.")
     lines.append("")
 
     for i, question in enumerate(QUESTIONS):
@@ -68,8 +77,8 @@ def main():
         answer = run_agent(
             question, game, pbp_events,
             period=PERIOD,
-            gc_start=GC_START,
-            gc_end=GC_END,
+            gc_start=gc_start,
+            gc_end=gc_end,
             team_abbr=TEAM,
             verbose=True,
         )

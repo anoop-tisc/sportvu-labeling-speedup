@@ -20,9 +20,12 @@ def _dist2d(x1, y1, x2, y2):
 
 
 def _fmt_clock(gc: float) -> str:
-    mins = int(gc) // 60
-    secs = gc - mins * 60
-    return f"{mins}:{secs:04.1f}"
+    """Format game clock as broadcast-style mm:ss (ceiling to next whole second)."""
+    import math
+    gc_ceil = math.ceil(gc)
+    mins = gc_ceil // 60
+    secs = gc_ceil % 60
+    return f"{mins}:{secs:02d}"
 
 
 def _get_ball_and_players(moment: Moment):
@@ -96,7 +99,7 @@ def get_player_positions(game: GameData, period: int, game_clock: float,
     result = {
         "period": period,
         "game_clock": round(moment.game_clock, 2),
-        "shot_clock": round(moment.shot_clock, 1) if moment.shot_clock else None,
+        "game_clock_display": _fmt_clock(moment.game_clock),
         "ball": None,
         "players": [],
     }

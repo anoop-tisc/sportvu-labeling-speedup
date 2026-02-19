@@ -272,6 +272,7 @@ You CAN answer from tracking data:
 - Timing of events
 
 You CANNOT determine from tracking data alone:
+- Shot clock remaining (the tracking data shot clock is unreliable — do not report it)
 - Pass type (bounce pass vs chest pass vs lob)
 - Player body orientation or facing direction
 - Screen contact or screen quality
@@ -287,9 +288,12 @@ When answering:
 
 
 def _fmt_clock(gc: float) -> str:
-    mins = int(gc) // 60
-    secs = gc - mins * 60
-    return f"{mins}:{secs:04.1f}"
+    """Format game clock as broadcast-style mm:ss (ceiling to next whole second)."""
+    import math
+    gc_ceil = math.ceil(gc)
+    mins = gc_ceil // 60
+    secs = gc_ceil % 60
+    return f"{mins}:{secs:02d}"
 
 
 def _find_offense_team_id(game: GameData, pbp_events: list[dict],
