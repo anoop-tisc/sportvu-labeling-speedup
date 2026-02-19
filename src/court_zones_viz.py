@@ -31,8 +31,11 @@ ZONE_COLORS = {
     "right corner":        "#3498db",
     "left wing":           "#2980b9",
     "right wing":          "#2980b9",
+    "left wing (deep)":    "#1a6a9a",
+    "right wing (deep)":   "#1a6a9a",
     "top of the arc":      "#8e44ad",
-    "backcourt":           "#95a5a6",
+    "in front of the logo": "#9b59b6",
+    "the logo":            "#c0392b",
 }
 
 # Short labels for the map
@@ -53,8 +56,11 @@ ZONE_LABELS = {
     "right corner":        "Right\nCorner",
     "left wing":           "Left\nWing",
     "right wing":          "Right\nWing",
+    "left wing (deep)":    "Left Wing\n(Deep)",
+    "right wing (deep)":   "Right Wing\n(Deep)",
     "top of the arc":      "Top of\nthe Arc",
-    "backcourt":           "Backcourt",
+    "in front of the logo": "In Front of\nthe Logo",
+    "the logo":            "The\nLogo",
 }
 
 
@@ -65,8 +71,9 @@ def generate_zone_map(output_path: str = "outputs/court_zones.png",
     draw_court uses: x 0..94, y -50..0  (y is negated from SportVU's 0..50).
     classify_zone uses raw SportVU coords: x 0..47, y 0..50.
     """
-    # Sample the half-court in classify_zone's coordinate system (x 0..47, y 0..50)
-    xs = np.arange(0, 47.5, resolution)
+    # Sample the half-court in classify_zone's coordinate system (x 0..53, y 0..50)
+    # Extend past 47 to capture the logo (center circle)
+    xs = np.arange(0, 53.5, resolution)
     ys = np.arange(0, 50.5, resolution)
 
     zone_names = sorted(ZONE_COLORS.keys())
@@ -100,13 +107,13 @@ def generate_zone_map(output_path: str = "outputs/court_zones.png",
     # Grid row 0 = y=0 (top), row -1 = y=50 (bottom).
     # imshow displays row 0 at top, so extent bottom=-50, top=0.
 
-    # Left half-court (x 0..47)
-    ax.imshow(grid_shifted, extent=[0, 47, -50, 0], aspect='auto',
+    # Left half-court + logo area (x 0..53)
+    ax.imshow(grid_shifted, extent=[0, 53, -50, 0], aspect='auto',
               cmap=cmap, vmin=0, vmax=len(cmap_colors) - 1,
               interpolation='nearest', zorder=1)
 
-    # Right half-court: mirror x and y
-    ax.imshow(grid_shifted[::-1, ::-1], extent=[47, 94, -50, 0], aspect='auto',
+    # Right half-court + logo area (mirror, x 41..94)
+    ax.imshow(grid_shifted[::-1, ::-1], extent=[41, 94, -50, 0], aspect='auto',
               cmap=cmap, vmin=0, vmax=len(cmap_colors) - 1,
               interpolation='nearest', zorder=1)
 
@@ -136,10 +143,13 @@ def generate_zone_map(output_path: str = "outputs/court_zones.png",
         "top of the key":      (25.0, 25.0),
         "left corner":         (5.0, 4.0),
         "right corner":        (5.0, 46.0),
-        "left wing":           (30.0, 8.0),
-        "right wing":          (30.0, 42.0),
-        "top of the arc":      (35.0, 25.0),
-        "backcourt":           (70.0, 25.0),
+        "left wing":           (28.0, 8.0),
+        "right wing":          (28.0, 42.0),
+        "left wing (deep)":    (40.0, 8.0),
+        "right wing (deep)":   (40.0, 42.0),
+        "top of the arc":      (30.0, 25.0),
+        "in front of the logo": (40.0, 25.0),
+        "the logo":            (47.0, 25.0),
     }
 
     for zone_name, (lx, ly) in label_positions.items():
@@ -154,8 +164,8 @@ def generate_zone_map(output_path: str = "outputs/court_zones.png",
                 bbox=dict(boxstyle="round,pad=0.3", facecolor=color,
                           edgecolor="white", alpha=0.85, lw=0.5))
 
-        # Right half: keep original labels
-        if zone_name != "backcourt":
+        # Right half: keep original labels (skip center-court zones — not mirrored)
+        if zone_name not in ("the logo", "in front of the logo"):
             rx = 94 - lx
             ax.text(rx, y_plot, label, ha="center", va="center",
                     fontsize=6.5, fontweight="bold", color="white", zorder=10,

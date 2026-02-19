@@ -69,9 +69,10 @@ def classify_zone(x: float, y: float) -> dict:
     else:
         side = "center"
 
-    # Priority 1: Backcourt
-    if x > 47:
-        return {"zone": "backcourt", "side": side, "distance_to_basket": round(dist, 1), "beyond_arc": False}
+    # Priority 1: The logo (center circle, radius 6ft around midcourt)
+    dist_to_center = math.sqrt((x - 47) ** 2 + (y - 25) ** 2)
+    if dist_to_center <= 6:
+        return {"zone": "the logo", "side": "center", "distance_to_basket": round(dist, 1), "beyond_arc": True}
 
     # Priority 2: Restricted area
     if dist <= RESTRICTED_AREA_RADIUS:
@@ -112,14 +113,17 @@ def classify_zone(x: float, y: float) -> dict:
         if y > 39 and x < 14:
             return {"zone": "right corner", "side": "right", "distance_to_basket": round(dist, 1), "beyond_arc": True}
 
-        # Wing threes
+        # Wing — split into near 3pt line vs near half court at x=35
         if y < 22:
-            return {"zone": "left wing", "side": "left", "distance_to_basket": round(dist, 1), "beyond_arc": True}
+            zone = "left wing" if x <= 35 else "left wing (deep)"
+            return {"zone": zone, "side": "left", "distance_to_basket": round(dist, 1), "beyond_arc": True}
         if y > 28:
-            return {"zone": "right wing", "side": "right", "distance_to_basket": round(dist, 1), "beyond_arc": True}
+            zone = "right wing" if x <= 35 else "right wing (deep)"
+            return {"zone": zone, "side": "right", "distance_to_basket": round(dist, 1), "beyond_arc": True}
 
-        # Top of the arc
-        return {"zone": "top of the arc", "side": "center", "distance_to_basket": round(dist, 1), "beyond_arc": True}
+        # Top of the arc — split into near 3pt line vs near half court at x=35
+        zone = "top of the arc" if x <= 35 else "in front of the logo"
+        return {"zone": zone, "side": "center", "distance_to_basket": round(dist, 1), "beyond_arc": True}
 
     # Priority 7: Mid-range
     if y < 22:
@@ -244,11 +248,15 @@ if __name__ == "__main__":
         (5.0, 42.0, "right corner three"),
         (30.0, 10.0, "left wing"),
         (30.0, 40.0, "right wing"),
+        (40.0, 10.0, "left wing (deep)"),
+        (40.0, 40.0, "right wing (deep)"),
         (30.0, 25.0, "top of the arc"),
         (15.0, 15.0, "left mid-range"),
         (15.0, 35.0, "right mid-range"),
         (25.0, 25.0, "top of the key"),
-        (60.0, 25.0, "backcourt"),
+        (30.0, 25.0, "top of the arc"),
+        (40.0, 25.0, "in front of the logo"),
+        (47.0, 25.0, "the logo"),
     ]
     for x, y, desc in test_points:
         result = classify_zone(x, y)
