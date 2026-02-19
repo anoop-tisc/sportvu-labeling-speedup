@@ -42,6 +42,21 @@
   #verify-section { display: none; margin-top: 40px; border-top: 1px solid #444; padding-top: 30px; }
   #verify-section h1 { margin-bottom: 12px; }
   #verify-section .controls { margin-top: 12px; margin-bottom: 8px; }
+  #phase-section { display: none; margin-top: 40px; border-top: 1px solid #444; padding-top: 30px; }
+  #phase-section h1 { margin-bottom: 12px; }
+  .phase-input {
+    background: #222; color: #eee; border: 1px solid #555; padding: 6px 10px;
+    font-family: monospace; font-size: 14px; width: 80px; text-align: center;
+    border-radius: 3px;
+  }
+  .phase-result {
+    margin-top: 16px; padding: 20px; background: #1a2a1a; border: 1px solid #3a5a3a;
+    border-radius: 4px; text-align: center;
+  }
+  .phase-result .phase-value { font-size: 28px; font-weight: bold; }
+  .phase-result .phase-positive { color: #f96; }
+  .phase-result .phase-negative { color: #6bf; }
+  .phase-result .phase-zero { color: #6f6; }
 </style>
 </head>
 <body>
@@ -135,6 +150,27 @@
         &nbsp; Time: <span id="verify-ct-time">0.000</span>s
       </div>
     </div>
+  </div>
+</div>
+
+<!-- Phase measurement section -->
+<div id="phase-section">
+  <h1>Measure Clock Phase Shift</h1>
+  <div class="instructions">
+    Step to the exact frame where the <b>broadcast overlay clock</b> ticks to a new second.<br>
+    Enter the new displayed time below and click <b>Measure Phase</b>.
+  </div>
+  <div style="text-align:center; margin-top: 12px;">
+    <span style="color:#aaa;">Broadcast clock just changed to:</span>&nbsp;
+    <input type="text" id="phase-clock-input" class="phase-input" placeholder="M:SS" value="">
+    &nbsp;
+    <button class="finalize" id="btn-measure-phase" onclick="measurePhase()">Measure Phase</button>
+  </div>
+  <div class="info" style="margin-top: 8px;">
+    Current synced frame: <span class="frame-num" id="phase-current-frame">-</span>
+    &nbsp; SportVU game clock at this frame: <span class="frame-num" id="phase-current-gc">-</span>s
+  </div>
+  <div id="phase-result-box" class="phase-result" style="display:none;">
   </div>
 </div>
 
@@ -268,6 +304,7 @@ function finalizeAlignment() {
 
     document.getElementById('verify-total').textContent = verifyTotalFrames;
     document.getElementById('verify-section').style.display = 'block';
+    document.getElementById('phase-section').style.display = 'block';
 
     bcVid.pause();
     ctVid.pause();
@@ -311,6 +348,62 @@ function globalStep(delta) {
   document.getElementById('verify-bc-time').textContent = bcTime.toFixed(3);
   document.getElementById('verify-ct-frame').textContent = courtFrame;
   document.getElementById('verify-ct-time').textContent = (courtFrame / COURT_FPS).toFixed(3);
+
+  // Update phase section live info
+  document.getElementById('phase-current-frame').textContent = verifyFrame;
+  document.getElementById('phase-current-gc').textContent = gc.toFixed(3);
+}
+
+function measurePhase() {
+  const input = document.getElementById('phase-clock-input').value.trim();
+  if (!input) return;
+
+  // Parse M:SS or MM:SS
+  const match = input.match(/^(\d{1,2}):(\d{2})$/);
+  if (!match) {
+    alert('Enter time as M:SS (e.g., 4:48)');
+    return;
+  }
+  const displayedSeconds = parseInt(match[1]) * 60 + parseInt(match[2]);
+
+  // The broadcast clock just ticked to this value, meaning the broadcast's
+  // underlying clock just crossed (displayedSeconds + 1.0)
+  const broadcastClockBoundary = displayedSeconds + 1.0;
+
+  // The SportVU game clock at this same visual moment
+  const courtFrame = window._verifyMinI + verifyFrame;
+  const sportvuGC = COURT_GC_START - courtFrame / COURT_FPS;
+
+  // Phase shift: how much the broadcast overlay leads SportVU
+  // Positive = broadcast leads (shows time crossing the boundary before SportVU does)
+  const phaseShiftSec = broadcastClockBoundary - sportvuGC;
+  const phaseShiftMs = Math.round(phaseShiftSec * 1000);
+
+  const absMs = Math.abs(phaseShiftMs);
+  let colorClass, direction;
+  if (phaseShiftMs > 0) {
+    colorClass = 'phase-positive';
+    direction = 'Broadcast overlay LEADS SportVU';
+  } else if (phaseShiftMs < 0) {
+    colorClass = 'phase-negative';
+    direction = 'Broadcast overlay LAGS SportVU';
+  } else {
+    colorClass = 'phase-zero';
+    direction = 'Perfectly aligned';
+  }
+
+  const box = document.getElementById('phase-result-box');
+  box.style.display = 'block';
+  box.innerHTML = `
+    <div class="phase-value ${colorClass}">${phaseShiftMs > 0 ? '+' : ''}${phaseShiftMs} ms</div>
+    <div style="margin-top:8px; color:#aaa;">${direction}</div>
+    <div style="margin-top:12px; font-size:12px; color:#777;">
+      Broadcast overlay just crossed: ${broadcastClockBoundary.toFixed(1)}s
+      (display changed to "${input}")<br>
+      SportVU game clock at this frame: ${sportvuGC.toFixed(3)}s<br>
+      Difference: ${broadcastClockBoundary.toFixed(1)} - ${sportvuGC.toFixed(3)} = ${phaseShiftSec.toFixed(3)}s
+    </div>
+  `;
 }
 
 document.addEventListener('keydown', (e) => {
